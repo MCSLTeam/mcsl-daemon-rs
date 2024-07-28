@@ -3,7 +3,6 @@ use env_logger::Env;
 mod user;
 mod storage;
 mod utils;
-mod base64;
 mod app;
 
 

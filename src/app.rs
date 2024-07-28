@@ -8,7 +8,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use fastwebsockets::{OpCode, upgrade, WebSocketError};
 use http_body_util::Empty;
-use log::{info, trace, warn};
+use log::{error, info, trace, warn};
 use serde::Deserialize;
 use tokio::net::TcpListener;
 use tokio::signal;
@@ -132,7 +132,7 @@ async fn ws_handler(
     let (resp, fut) = ws.upgrade().unwrap();
     tokio::task::spawn(async move {
         if let Err(e) = handle_client(fut).await {
-            eprintln!("Error in websocket connection: {}", e);
+            error!("Error in websocket connection: {}", e);
         }
     });
     trace!("{:?}",&resp);

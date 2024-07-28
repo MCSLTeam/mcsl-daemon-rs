@@ -7,7 +7,7 @@ use ring::pbkdf2::PBKDF2_HMAC_SHA256;
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 
-use crate::base64;
+use crate::utils::{base64_decode, base64_encode};
 
 const SALT_LEN: usize = 16;
 const CREDENTIAL_LEN: usize = 32;
@@ -59,8 +59,8 @@ impl Auth {
             return false;
         }
 
-        let salt = base64::decode(parts[0]).unwrap();
-        let stored_hash = base64::decode(parts[1]).unwrap();
+        let salt = base64_decode(parts[0]).unwrap();
+        let stored_hash = base64_decode(parts[1]).unwrap();
 
 
         pbkdf2::verify(
@@ -87,8 +87,8 @@ impl Auth {
             &mut pbkdf2_hash,
         );
 
-        let salt_base64 = base64::encode(&salt);
-        let hash_base64 = base64::encode(&pbkdf2_hash);
+        let salt_base64 = base64_encode(&salt);
+        let hash_base64 = base64_encode(&pbkdf2_hash);
         format!("{}${}", salt_base64, hash_base64)
     }
 }
