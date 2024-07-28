@@ -1,0 +1,20 @@
+[package]
+name = "mcsl-daemon-rs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ring = "0.17.8"
+serde = { version = "1.0.204", features = ["derive"] }
+serde_json = "1.0.120"
+tokio = { version = "1.38.0", features = ["rt", "rt-multi-thread", "macros"] }
+log = "0.4.22"
+futures = "0.3.30"
+env_logger = "0.11.3"
+fastwebsockets = { version= "0.8.0" ,features = ["async-trait","simd"]}
+axum = { versin="0.7.5" ,features = ["http1","query","tokio"]}
+anyhow = "1.0.86"
+jsonwebtoken = "9.3.0"
+dashmap = {version= "6.0.1",features = ["serde"] }

@@ -1,0 +1,6 @@
+/target
+*.bak
+*.json
+*.zip
+*.idea
+*.lock
