@@ -1,6 +1,7 @@
 use std::num::NonZeroU32;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use jsonwebtoken::{decode, DecodingKey, encode, EncodingKey, errors, Header, Validation};
 use ring::pbkdf2;
 use ring::pbkdf2::PBKDF2_HMAC_SHA256;
 use ring::rand::{SecureRandom, SystemRandom};
@@ -19,8 +20,8 @@ pub struct JwtClaims {
     leeway: u64,
     iss: String,
     aud: String,
-    usr: String,
-    pwd: String,
+    pub usr: String,
+    pub pwd: String,
 }
 
 impl JwtClaims {
@@ -33,6 +34,21 @@ impl JwtClaims {
             usr,
             pwd,
         }
+    }
+
+    pub fn from_token(token: &str, secret: &str) -> Result<Self, errors::Error> {
+        decode::<Self>(
+            token,
+            &DecodingKey::from_secret(secret.as_bytes()),
+            &Validation::default(),
+        ).map(|data| data.claims)
+    }
+    pub fn to_token(&self, secret: &str) -> String {
+        encode(
+            &Header::default(),
+            &self,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        ).unwrap()
     }
 }
 
