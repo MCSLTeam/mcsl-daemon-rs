@@ -1,212 +1,268 @@
+use std::collections::HashMap;
+use std::convert::Infallible;
 use std::net::SocketAddr;
+use std::pin::pin;
 use std::sync::Arc;
+use std::time::Duration;
 
-use axum::{http, Router};
-use axum::extract::{ConnectInfo, FromRef, Query, State};
-use axum::http::Response;
-use axum::response::IntoResponse;
-use axum::routing::get;
-use fastwebsockets::{OpCode, upgrade, WebSocketError};
-use http_body_util::Empty;
-use log::{error, info, trace, warn};
+use anyhow::anyhow;
+use hyper::{body::Incoming as IncomingBody, Method, Request, Response, StatusCode};
+use hyper::body::Bytes;
+use hyper::header::{CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE};
+use hyper::http::HeaderValue;
+use hyper::service::service_fn;
+use hyper::upgrade::Upgraded;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto::Builder;
+use log::{error, info, trace};
 use serde::Deserialize;
-use tokio::net::TcpListener;
-use tokio::signal;
-
+use serde::de::DeserializeOwned;
+use tokio::{net::TcpListener, sync::watch};
+use tokio::sync::watch::Receiver;
+use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
+use tokio_tungstenite::tungstenite::protocol::Role;
+use crate::remote::ws_behavior::WsBehavior;
 use crate::storage::AppConfig;
 use crate::user::{JwtClaims, Users, UsersManager};
-use crate::user::users::UserMeta;
+type Body = http_body_util::Full<Bytes>;
 
 #[derive(Debug, Deserialize)]
 struct LoginParams {
     usr: String,
     pwd: String,
-    expired: Option<u64>,
+    expired: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
-struct WsParams {
-    token: String,
+
+#[derive(Clone)]
+pub struct AppState {
+    users: Arc<Users>,
+    config: AppConfig,
 }
 
-impl FromRef<AppState> for AppConfig {
-    fn from_ref(state: &AppState) -> Self {
-        state.config.clone()
+fn parse_params<T: DeserializeOwned>(query: Option<&str>) -> anyhow::Result<T> {
+    if let Some(q) = query {
+        let params: Vec<&str> = q.split('&').collect();
+        let mut map = HashMap::new();
+
+        for param in params {
+            let idx = param.find('=').unwrap();
+            let key = param[..idx].to_string();
+            let value = param[idx + 1..].to_string();
+            map.insert(key, value);
+        }
+
+        let json = serde_json::to_string(&map)?;
+        info!("params: {}", json);
+        let rv = serde_json::from_str::<T>(json.as_str())?;
+        return Ok(rv);
     }
+
+    Err(anyhow!("empty query"))
 }
 
 async fn login_handler(
-    Query(params): Query<LoginParams>,
-    State(app_state): State<Arc<AppState>>,
-) -> impl IntoResponse {
-    let expired = params.expired.unwrap_or(30);
-    match app_state.users.authenticate(&params.usr, &params.pwd) {
+    state: AppState,
+    req: Request<IncomingBody>,
+    remote_addr: SocketAddr,
+) -> Result<Response<Body>, Infallible> {
+    let uri = req.uri();
+    let query = uri.query();
+
+    let params = parse_params::<LoginParams>(query);
+
+    if params.is_err() {
+        return Ok(Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .body(Body::from("Invalid query"))
+            .unwrap());
+    }
+    let params = params.unwrap();
+
+
+    let expired = params.expired.map(|s| s.parse::<u64>().unwrap()).unwrap_or(30);
+    match state.users.authenticate(&params.usr, &params.pwd) {
         Some(_) => {
             let jwt_claims = JwtClaims::new(
                 params.usr.to_string(),
                 params.pwd.to_string(),
                 expired,
             );
-
-            (http::StatusCode::OK, jwt_claims.to_token(&app_state.config.secret))
+            let token = jwt_claims.to_token(&state.config.secret);
+            Ok(Response::new(Body::from(token)))
         }
         None => {
             let response = "Unauthorized";
-            (
-                http::StatusCode::UNAUTHORIZED,
-                response.to_string(),
-            )
+            Ok(Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(Body::from(response))
+                .unwrap())
         }
     }
 }
 
-async fn handle_client(fut: upgrade::UpgradeFut) -> Result<(), WebSocketError> {
-    let mut ws = fastwebsockets::FragmentCollector::new(fut.await?);
-    let mut fragment_buffer = vec![];
-    let mut last_opcode = OpCode::Continuation;
-    loop {
-        let frame = ws.read_frame().await?;
-        match &frame.opcode {
-            OpCode::Close => break,
-            OpCode::Continuation => {
-                if !frame.fin {
-                    fragment_buffer.extend(frame.payload.to_vec());
-                } else {
-                    fragment_buffer.extend(frame.payload.to_vec());
-                    dispatch_frame(last_opcode, fragment_buffer.to_vec()).await;
-                    fragment_buffer.clear();
-                }
-            }
-            _ => {
-                last_opcode = frame.opcode;
-                if frame.fin {
-                    dispatch_frame(frame.opcode, frame.payload.to_vec()).await;
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn dispatch_frame(op_code: OpCode, payload: Vec<u8>) {
-    match op_code {
-        OpCode::Text => {
-            println!("{}", String::from_utf8(payload).unwrap())
-        }
-        _ => {
-            warn!("Unsupported opcode: {:?}", op_code)
-        }
+async fn handle_ws_connection(
+    state: AppState,
+    ws: WebSocketStream<TokioIo<Upgraded>>,
+    addr: SocketAddr,
+    cancel_token: Receiver<bool>,
+) {
+    if let Err(e) = WsBehavior::start(ws, state, cancel_token,addr).await {
+        error!("Error handling WebSocket connection: {}", e);
     }
 }
+
 async fn ws_handler(
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Query(params): Query<WsParams>,
-    State(app_state): State<Arc<AppState>>,
-    ws: upgrade::IncomingUpgrade,
-) -> impl IntoResponse {
-    info!("Received WebSocket connection from: {}, token={}",addr,params.token);
-    let user_meta:UserMeta;
-    match JwtClaims::from_token(&params.token, &app_state.config.secret) {
-        Ok(claims) => {
-            match &app_state.users.authenticate(&claims.usr, &claims.pwd){
-                Some(user) => {
-                    user_meta = user.clone();
-                },
-                None => {
-                    return Response::builder()
-                        .status(http::StatusCode::UNAUTHORIZED)
-                        .body(Empty::new())
-                        .unwrap()
-                }
+    state: AppState,
+    mut req: Request<IncomingBody>,
+    remote_addr: SocketAddr,
+    cancel_token: Receiver<bool>,
+) -> Result<Response<Body>, Infallible> {
+    let uri = req.uri();
+    let query = uri.query();
+    let headers = req.headers();
+
+    let derived = headers.get(SEC_WEBSOCKET_KEY).map(|k| derive_accept_key(k.as_bytes()));
+    let ver = req.version();
+
+    let token = query.and_then(|q| {
+        let params: Vec<&str> = q.split('&').collect();
+        params.into_iter().find_map(|param| {
+            let parts: Vec<&str> = param.split('=').collect();
+            if parts.len() == 2 && parts[0] == "token" {
+                Some(parts[1])
+            } else {
+                None
             }
-        }
-        Err(e)=>{
-            trace!("Token validation failed: {}", &e);
-            return Response::builder()
-                .status(http::StatusCode::UNAUTHORIZED)
-                .body(Empty::new())
-                .unwrap()
+        })
+    });
+
+    let mut user_meta = None;
+    if let Some(token) = token {
+        match JwtClaims::from_token(token, &state.config.secret) {
+            Ok(claims) => {
+                user_meta = state.users.authenticate(&claims.usr, &claims.pwd);
+            }
+            Err(e) => trace!("Token validation failed: {}", e)
         }
     }
-    let (resp, fut) = ws.upgrade().unwrap();
-    tokio::task::spawn(async move {
-        if let Err(e) = handle_client(fut).await {
-            error!("Error in websocket connection: {}", e);
+    if user_meta.is_none() {
+        return Ok(Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(Body::from("Unauthorized"))
+            .unwrap());
+    }
+
+    tokio::spawn(async move {
+        match hyper::upgrade::on(&mut req).await {
+            Ok(upgrade) => {
+                let upgraded = TokioIo::new(upgrade);
+                handle_ws_connection(
+                    state,
+                    WebSocketStream::from_raw_socket(upgraded, Role::Server, None).await,
+                    remote_addr,
+                    cancel_token,
+                ).await;
+            }
+            Err(e) => {
+                println!("Error upgrading connection: {}", e);
+            }
         }
     });
-    trace!("{:?}",&resp);
-    resp
+
+    // send upgrade response
+    let mut res = Response::new(Body::default());
+    *res.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
+    *res.version_mut() = ver;
+    res.headers_mut().append(CONNECTION, HeaderValue::from_static("Upgrade"));
+    res.headers_mut().append(UPGRADE, HeaderValue::from_static("websocket"));
+    res.headers_mut().append(SEC_WEBSOCKET_ACCEPT, derived.unwrap().parse().unwrap());
+    Ok(res)
 }
 
-// 返回一个 future，当接收到 Ctrl+C 或者其他关闭信号时完成
-async fn shutdown_signal() {
-
-    // 用于接收 Ctrl+C 信号
-    let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("Failed to install Ctrl+C handler");
-    };
-
-    // 用于接收 SIGTERM 信号
-    #[cfg(unix)]
-    let terminate = async {
-        signal::unix::signal(signal::unix::SignalKind::terminate())
-            .expect("Failed to install signal handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+async fn handle_request(
+    app_state: AppState,
+    req: Request<IncomingBody>,
+    remote_addr: SocketAddr,
+    cancel_token: Receiver<bool>,
+) -> Result<Response<Body>, Infallible> {
+    match (req.method(), req.uri().path()) {
+        (&Method::GET, "/api/v1") => ws_handler(app_state, req, remote_addr, cancel_token).await,
+        (&Method::GET, "/login") => login_handler(app_state, req, remote_addr).await,
+        _ => {
+            // Return 404 not found response.
+            Ok(Response::builder()
+                .status(StatusCode::NOT_FOUND)
+                .body(Body::from("Not Found"))
+                .unwrap())
+        }
     }
-
-    println!("App shutting down...");
 }
 
-struct AppState {
-    users: Arc<Users>,
-    config: AppConfig,
-}
-pub struct App {
-    users: Arc<Users>,
-    config: AppConfig,
-}
+pub async fn run_app() -> anyhow::Result<()> {
+    let users = Users::new("users.json");
+    users.fix_admin().unwrap();
 
-impl App {
-    pub fn new() -> Self {
-        let users = Users::new("users.json");
-        let config = AppConfig::new();
-        users.fix_admin().unwrap();
-        App {
-            users: Arc::new(users),
-            config,
+    let config = AppConfig::new();
+
+    let addr: SocketAddr = format!("127.0.0.1:{}", &config.port).parse().unwrap();
+    let listener = TcpListener::bind(&addr).await?;
+    info!("Listening on {}", &addr);
+
+    let builder = Builder::new(TokioExecutor::new());
+    let mut ctrl_c = pin!(tokio::signal::ctrl_c());
+
+    let app_state = AppState {
+        users: Arc::new(users),
+        config: config.clone(),
+    };
+
+    let (tx, rx) = watch::channel(false);
+
+    let mut handlers = vec![];
+
+    loop {
+        tokio::select! {
+            conn = listener.accept() => {
+
+                let (stream, peer_addr) = match conn {
+                    Ok(conn) => conn,
+                    Err(e) => {
+                        info!("accept error: {}", e);
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
+                };
+                info!("incoming connection accepted: {}", peer_addr);
+                let io = TokioIo::new(stream);
+                let state = app_state.clone();
+
+                let rx_clone = rx.clone();
+
+                let conn = builder.serve_connection_with_upgrades(
+                    io,
+                    service_fn(move |req| handle_request(state.to_owned(), req, peer_addr,rx_clone.to_owned()))
+                ).into_owned();
+
+                handlers.push(tokio::spawn(async move {
+                    if let Err(err) = conn.await {
+                        error!("connection error: {}", err);
+                    }
+                    trace!("connection dropped: {}", peer_addr);
+                }));
+            },
+
+            _ = ctrl_c.as_mut() => {
+                tx.send(true).unwrap();
+                info!("Ctrl-C received,stop listening and starting shutdown");
+                    break;
+            }
         }
     }
 
-
-    pub async fn start(&self) -> anyhow::Result<()> {
-        let listener = TcpListener::bind(format!("127.0.0.1:{}", &self.config.port)).await?;
-        info!("App started at http://127.0.0.1:{}", &self.config.port);
-
-        let app_state = Arc::new(AppState {
-            users: self.users.clone(),
-            config: self.config.clone(),
-        });
-
-        let app = Router::new()
-            .route("/login", get(login_handler))
-            .route("/api/v1", get(ws_handler))
-            .with_state(app_state);
-
-        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
-            .with_graceful_shutdown(shutdown_signal())
-            .await?;
-        Ok(())
+    for handler in handlers {
+        handler.await.unwrap();
     }
+    Ok(())
 }

@@ -11,13 +11,15 @@ serde = { version = "1.0.204", features = ["derive"] }
 serde_json = "1.0.120"
 tokio = { version = "1.39.2", features = ["rt", "rt-multi-thread", "macros", "signal"] }
 log = "0.4.22"
-env_logger = "0.11.3"
-fastwebsockets = { version = "0.8.0", features = ["async-trait", "simd", "with_axum", "upgrade"] }
-axum = { versin = "0.7.5", features = ["http1", "query", "tokio"] }
 anyhow = "1.0.86"
 jsonwebtoken = "9.3.0"
 dashmap = { version = "6.0.1", features = ["serde"] }
+pretty_env_logger = "0.5.0"
+hyper = { verion = "1.4.1", features = ["server","http1"] }
+tokio-tungstenite = "0.23.1"
 http-body-util = "0.1.2"
+hyper-util = { version= "0.1.6", features = ["tokio", "http1", "server-graceful","server-auto"] }
+futures = "0.3.30"
 
 [profile.release]
 strip = true

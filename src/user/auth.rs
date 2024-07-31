@@ -17,7 +17,6 @@ pub struct Auth;
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
 pub struct JwtClaims {
     exp: u64,
-    leeway: u64,
     iss: String,
     aud: String,
     pub usr: String,
@@ -28,7 +27,6 @@ impl JwtClaims {
     pub fn new(usr: String, pwd: String, exp: u64) -> Self {
         Self {
             exp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + exp,
-            leeway: 0,
             iss: "MCServerLauncher.Daemon".to_string(),
             aud: "MCServerLauncher.Daemon".to_string(),
             usr,
@@ -37,10 +35,15 @@ impl JwtClaims {
     }
 
     pub fn from_token(token: &str, secret: &str) -> Result<Self, errors::Error> {
+        let mut validation = Validation::default();
+        validation.set_audience(&["MCServerLauncher.Daemon".to_string()]);
+        validation.set_issuer(&["MCServerLauncher.Daemon".to_string()]);
+        validation.leeway = 0;
+
         decode::<Self>(
             token,
             &DecodingKey::from_secret(secret.as_bytes()),
-            &Validation::default(),
+            &validation,
         ).map(|data| data.claims)
     }
     pub fn to_token(&self, secret: &str) -> String {

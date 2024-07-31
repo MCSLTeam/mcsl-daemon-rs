@@ -17,7 +17,7 @@ impl Config for AppConfig {
 }
 
 impl AppConfig {
-    pub fn new() -> Self {
+    pub fn new() -> AppConfig {
         Self::load_config_or_default("config.json", || {
             AppConfig {
                 port: 11451,

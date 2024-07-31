@@ -1,26 +1,19 @@
-use env_logger::Env;
+use crate::app::run_app;
 
 mod user;
 mod storage;
 mod utils;
 mod app;
-
-
-
+mod remote;
 
 fn init_logger(){
-    let env = Env::default()
-        .filter_or("MY_LOG_LEVEL", "trace")
-        .write_style_or("MY_LOG_STYLE", "always");
-
-    env_logger::init_from_env(env);
+    std::env::set_var("RUST_LOG", "trace");
+    pretty_env_logger::init();
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()>{
     init_logger();
 
-    let app = app::App::new();
-    app.start().await?;
-    Ok(())
+    run_app().await
 }
