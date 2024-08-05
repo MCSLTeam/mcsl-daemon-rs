@@ -14,6 +14,5 @@ fn init_logger(){
 #[tokio::main]
 async fn main() -> anyhow::Result<()>{
     init_logger();
-
     run_app().await
 }

@@ -1,29 +1,29 @@
 use std::net::SocketAddr;
+
 use anyhow::anyhow;
-use futures::channel::mpsc::{unbounded,  UnboundedSender};
 use futures::{SinkExt, StreamExt, TryFutureExt};
+use futures::channel::mpsc::{unbounded, UnboundedSender};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use log::info;
 use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::select;
-use tokio::sync::Mutex;
-use tokio::sync::watch::Receiver;
 use tokio::task::JoinError;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 use tokio_tungstenite::tungstenite::protocol::frame::Frame;
 use tokio_tungstenite::WebSocketStream;
-use crate::app::AppState;
+
+use crate::app::AppResources;
 use crate::remote::event::Events;
 
 pub struct WsBehavior {
-    state: AppState,
+    app_resources: AppResources,
     event_sender: UnboundedSender<(Events, Value)>, // TODO 实现event
-    sender: Mutex<UnboundedSender<Message>>,
-    addr: SocketAddr
+    sender: UnboundedSender<Message>,
+    addr: SocketAddr,
 }
 
 #[derive(Serialize, Debug, Clone, Copy)]
@@ -32,7 +32,7 @@ struct HeartBeatTemplate {
 }
 
 impl WsBehavior {
-    pub fn new(state: AppState, event_sender: UnboundedSender<(Events, Value)>, sender: UnboundedSender<Message>,addr:SocketAddr) -> WsBehavior {
+    fn new(app_resources: AppResources, event_sender: UnboundedSender<(Events, Value)>, sender: UnboundedSender<Message>, addr: SocketAddr) -> WsBehavior {
         // let mut es = event_sender.clone();
         // tokio::spawn(async move {
         //     loop {
@@ -44,15 +44,15 @@ impl WsBehavior {
         // });
 
         WsBehavior {
-            state,
+            app_resources,
             event_sender,
-            sender: Mutex::new(sender),
-            addr
+            sender,
+            addr,
         }
     }
 }
 impl WsBehavior {
-    async fn handle_text(&self, msg: String) -> anyhow::Result<()> {
+    async fn handle_text(&mut self, msg: String) -> anyhow::Result<()> {
         // TODO 实现action
 
         info!("received text: {}", msg);
@@ -60,34 +60,35 @@ impl WsBehavior {
         Ok(())
     }
 
-    async fn handle_binary(&self, msg: Vec<u8>) -> anyhow::Result<()> {
+    async fn handle_binary(&mut self, msg: Vec<u8>) -> anyhow::Result<()> {
         todo!()
     }
 
-    async fn handle_ping(&self, msg: Vec<u8>) -> anyhow::Result<()> {
+    async fn handle_ping(&mut self, msg: Vec<u8>) -> anyhow::Result<()> {
         todo!()
     }
 
-    async fn handle_pong(&self, msg: Vec<u8>) -> anyhow::Result<()> {
+    async fn handle_pong(&mut self, msg: Vec<u8>) -> anyhow::Result<()> {
         todo!()
     }
 
-    async fn handle_close(&self, msg: Option<CloseFrame<'_>>) -> anyhow::Result<()> {
+    async fn handle_close(&mut self, msg: Option<CloseFrame<'_>>) -> anyhow::Result<()> {
         info!("websocket close from client: {}",self.addr);
         Ok(())
     }
 
-    async fn handle_frame(&self, frame: Frame) -> anyhow::Result<()> {
+    async fn handle_frame(&mut self, frame: Frame) -> anyhow::Result<()> {
         todo!()
     }
 
-    async fn send(&self, msg: Message) -> anyhow::Result<()> {
-        let mut guard = self.sender.lock().await;
-        guard.send(msg).await?;
+    async fn send(&mut self, msg: Message) -> anyhow::Result<()> {
+        // let mut guard = self.sender.lock().await;
+        // guard.send(msg).await?;
+        self.sender.send(msg).await?;
         Ok(())
     }
 
-    async fn stop(&self) -> anyhow::Result<()> {
+    async fn stop(&mut self) -> anyhow::Result<()> {
         let close_frame = CloseFrame {
             code: CloseCode::Normal,
             reason: "".into(),
@@ -98,14 +99,16 @@ impl WsBehavior {
 }
 
 impl WsBehavior {
-    pub async fn start(ws: WebSocketStream<TokioIo<Upgraded>>, state: AppState, mut cancel_token: Receiver<bool>,peer_addr:SocketAddr) -> anyhow::Result<()> {
+    pub async fn start(ws: WebSocketStream<TokioIo<Upgraded>>, app_resources: AppResources, peer_addr: SocketAddr) -> anyhow::Result<()> {
         let (mut outgoing, mut incoming) = ws.split();
 
         let (outgoing_tx, mut outgoing_rx) = unbounded();
 
         let (event_tx, mut event_rx) = unbounded();
 
-        let ws_behavior = WsBehavior::new(state, event_tx, outgoing_tx,peer_addr);
+        let mut ws_behavior = WsBehavior::new(app_resources.clone(), event_tx, outgoing_tx, peer_addr);
+
+        let mut cancel_token = app_resources.cancel_token.clone();
 
         let incoming_loop = async move {
             loop {
@@ -126,6 +129,7 @@ impl WsBehavior {
 
                     _ = cancel_token.changed() => {
                         ws_behavior.stop().await?;
+                        info!("websocket connection from {} closed", peer_addr);
                         break;
                     }
                 }
@@ -138,7 +142,13 @@ impl WsBehavior {
                 select! {
                     m = outgoing_rx.next() => {
                         if let Some(m) = m{
-                            outgoing.send(m).await?;
+                            match m {
+                                Message::Close(_)=>{
+                                    outgoing.send(m).await?;
+                                    outgoing.close().await?;
+                                },
+                                _ => outgoing.send(m).await?
+                            }
                         }
                         else {break;}
                     }
@@ -163,10 +173,7 @@ impl WsBehavior {
         tokio::try_join!(
             incoming_task,
             outgoing_loop
-        )?;
-
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-        Ok(())
+        ).map(|_| ())
     }
 }
 
