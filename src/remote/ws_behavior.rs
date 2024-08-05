@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 
 use anyhow::anyhow;
-use futures::{SinkExt, StreamExt, TryFutureExt};
 use futures::channel::mpsc::{unbounded, UnboundedSender};
+use futures::{SinkExt, StreamExt, TryFutureExt};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use log::info;
@@ -10,10 +10,10 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::select;
 use tokio::task::JoinError;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::protocol::CloseFrame;
-use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
-use tokio_tungstenite::tungstenite::protocol::frame::Frame;
+use tokio_tungstenite::tungstenite::{
+    protocol::{frame::coding::CloseCode, frame::Frame, CloseFrame},
+    Message,
+};
 use tokio_tungstenite::WebSocketStream;
 
 use crate::app::AppResources;
@@ -32,7 +32,12 @@ struct HeartBeatTemplate {
 }
 
 impl WsBehavior {
-    fn new(app_resources: AppResources, event_sender: UnboundedSender<(Events, Value)>, sender: UnboundedSender<Message>, addr: SocketAddr) -> WsBehavior {
+    fn new(
+        app_resources: AppResources,
+        event_sender: UnboundedSender<(Events, Value)>,
+        sender: UnboundedSender<Message>,
+        addr: SocketAddr,
+    ) -> WsBehavior {
         // let mut es = event_sender.clone();
         // tokio::spawn(async move {
         //     loop {
@@ -73,7 +78,7 @@ impl WsBehavior {
     }
 
     async fn handle_close(&mut self, msg: Option<CloseFrame<'_>>) -> anyhow::Result<()> {
-        info!("websocket close from client: {}",self.addr);
+        info!("websocket close from client: {}", self.addr);
         Ok(())
     }
 
@@ -99,14 +104,19 @@ impl WsBehavior {
 }
 
 impl WsBehavior {
-    pub async fn start(ws: WebSocketStream<TokioIo<Upgraded>>, app_resources: AppResources, peer_addr: SocketAddr) -> anyhow::Result<()> {
+    pub async fn start(
+        ws: WebSocketStream<TokioIo<Upgraded>>,
+        app_resources: AppResources,
+        peer_addr: SocketAddr,
+    ) -> anyhow::Result<()> {
         let (mut outgoing, mut incoming) = ws.split();
 
         let (outgoing_tx, mut outgoing_rx) = unbounded();
 
         let (event_tx, mut event_rx) = unbounded();
 
-        let mut ws_behavior = WsBehavior::new(app_resources.clone(), event_tx, outgoing_tx, peer_addr);
+        let mut ws_behavior =
+            WsBehavior::new(app_resources.clone(), event_tx, outgoing_tx, peer_addr);
 
         let mut cancel_token = app_resources.cancel_token.clone();
 
@@ -168,12 +178,9 @@ impl WsBehavior {
             Ok(())
         };
 
-        let incoming_task = tokio::spawn(incoming_loop).map_err(|e: JoinError| anyhow!("incoming task error: {}", e));
+        let incoming_task = tokio::spawn(incoming_loop)
+            .map_err(|e: JoinError| anyhow!("incoming task error: {}", e));
 
-        tokio::try_join!(
-            incoming_task,
-            outgoing_loop
-        ).map(|_| ())
+        tokio::try_join!(incoming_task, outgoing_loop).map(|_| ())
     }
 }
-

@@ -1,9 +1,8 @@
 use std::num::NonZeroU32;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use jsonwebtoken::{decode, DecodingKey, encode, EncodingKey, errors, Header, Validation};
-use ring::pbkdf2;
-use ring::pbkdf2::PBKDF2_HMAC_SHA256;
+use jsonwebtoken::{decode, encode, errors, DecodingKey, EncodingKey, Header, Validation};
+use ring::pbkdf2::{self, PBKDF2_HMAC_SHA256};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 
@@ -26,7 +25,11 @@ pub struct JwtClaims {
 impl JwtClaims {
     pub fn new(usr: String, pwd: String, exp: u64) -> Self {
         Self {
-            exp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs() + exp,
+            exp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs()
+                + exp,
             iss: "MCServerLauncher.Daemon".to_string(),
             aud: "MCServerLauncher.Daemon".to_string(),
             usr,
@@ -44,14 +47,16 @@ impl JwtClaims {
             token,
             &DecodingKey::from_secret(secret.as_bytes()),
             &validation,
-        ).map(|data| data.claims)
+        )
+        .map(|data| data.claims)
     }
     pub fn to_token(&self, secret: &str) -> String {
         encode(
             &Header::default(),
             &self,
             &EncodingKey::from_secret(secret.as_bytes()),
-        ).unwrap()
+        )
+        .unwrap()
     }
 }
 
@@ -65,14 +70,14 @@ impl Auth {
         let salt = base64_decode(parts[0]).unwrap();
         let stored_hash = base64_decode(parts[1]).unwrap();
 
-
         pbkdf2::verify(
             PBKDF2_HMAC_SHA256,
             NonZeroU32::new(N_ITER).unwrap(),
             &salt,
             pwd.as_bytes(),
             &stored_hash,
-        ).is_ok()
+        )
+        .is_ok()
     }
 
     // 使用Pbkdf2,盐量16,key长32,迭代次数10000，hash算法：sha256

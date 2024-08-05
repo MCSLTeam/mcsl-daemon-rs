@@ -5,10 +5,10 @@ use serde::{Deserialize, Serialize};
 
 pub trait FileIoWithBackup {
     /// Writes the given content to a file and creates a backup of the file before writing.
-    fn write_with_backup<P: AsRef<Path>>(path: P, content: &str) -> Result<(), std::io::Error>{
+    fn write_with_backup<P: AsRef<Path>>(path: P, content: &str) -> Result<(), std::io::Error> {
         let path = path.as_ref();
 
-        if path.exists(){
+        if path.exists() {
             let backup_path = path.with_extension("bak");
 
             // Create a backup of the file
@@ -26,14 +26,14 @@ pub trait FileIoWithBackup {
 pub trait Config: FileIoWithBackup {
     type ConfigType: Serialize + for<'de> Deserialize<'de>;
 
-    fn load_config<P: AsRef<Path>>( path: P) -> anyhow::Result<Self::ConfigType>{
+    fn load_config<P: AsRef<Path>>(path: P) -> anyhow::Result<Self::ConfigType> {
         let path = path.as_ref();
         let content = fs::read_to_string(path)?;
         let config: Self::ConfigType = serde_json::from_str(&content)?;
         Ok(config)
     }
 
-    fn save_config<P: AsRef<Path>>(path: P, config: &Self::ConfigType) -> anyhow::Result<()>{
+    fn save_config<P: AsRef<Path>>(path: P, config: &Self::ConfigType) -> anyhow::Result<()> {
         let path = path.as_ref();
         let content = serde_json::to_string_pretty(config)?;
         Self::write_with_backup(path, &content)?;

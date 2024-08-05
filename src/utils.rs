@@ -67,10 +67,10 @@ pub fn base64_decode(input: &str) -> Result<Vec<u8>, &'static str> {
     Ok(output)
 }
 
-
 pub fn get_random_string(len: usize) -> String {
     let rng = SystemRandom::new();
     let mut buf = vec![0u8; len];
-    rng.fill(&mut buf).expect("Failed to generate random password");
+    rng.fill(&mut buf)
+        .expect("Failed to generate random password");
     base64_encode(&buf)
 }

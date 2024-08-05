@@ -6,23 +6,24 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::anyhow;
-use hyper::{body::Incoming as IncomingBody, Method, Request, Response, StatusCode};
 use hyper::body::Bytes;
 use hyper::header::{CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE};
 use hyper::http::HeaderValue;
 use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
+use hyper::{body::Incoming as IncomingBody, Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder;
 use log::{error, info, trace};
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
-use tokio::{net::TcpListener, select, sync::watch};
-use tokio::sync::Mutex;
-use tokio::sync::watch::{Receiver, Sender};
+use tokio::sync::{
+    watch::{Receiver, Sender},
+    Mutex,
+};
 use tokio::task::JoinHandle;
-use tokio_tungstenite::tungstenite::handshake::derive_accept_key;
-use tokio_tungstenite::tungstenite::protocol::Role;
+use tokio::{net::TcpListener, select, sync::watch};
+use tokio_tungstenite::tungstenite::{handshake::derive_accept_key, protocol::Role};
 use tokio_tungstenite::WebSocketStream;
 
 use crate::remote::ws_behavior::WsBehavior;
@@ -37,7 +38,6 @@ struct LoginParams {
     pwd: String,
     expired: Option<String>,
 }
-
 
 fn parse_params<T: DeserializeOwned>(query: Option<&str>) -> anyhow::Result<T> {
     if let Some(q) = query {
@@ -78,15 +78,14 @@ async fn login_handler(
     }
     let params = params.unwrap();
 
-
-    let expired = params.expired.map(|s| s.parse::<u64>().unwrap()).unwrap_or(30);
+    let expired = params
+        .expired
+        .map(|s| s.parse::<u64>().unwrap())
+        .unwrap_or(30);
     match app_resources.users.authenticate(&params.usr, &params.pwd) {
         Some(_) => {
-            let jwt_claims = JwtClaims::new(
-                params.usr.to_string(),
-                params.pwd.to_string(),
-                expired,
-            );
+            let jwt_claims =
+                JwtClaims::new(params.usr.to_string(), params.pwd.to_string(), expired);
             let token = jwt_claims.to_token(&app_resources.app_config.secret);
             Ok(Response::new(Body::from(token)))
         }
@@ -119,7 +118,9 @@ async fn ws_handler(
     let query = uri.query();
     let headers = req.headers();
 
-    let derived = headers.get(SEC_WEBSOCKET_KEY).map(|k| derive_accept_key(k.as_bytes()));
+    let derived = headers
+        .get(SEC_WEBSOCKET_KEY)
+        .map(|k| derive_accept_key(k.as_bytes()));
     let ver = req.version();
 
     let token = query.and_then(|q| {
@@ -140,7 +141,7 @@ async fn ws_handler(
             Ok(claims) => {
                 user_meta = app_resources.users.authenticate(&claims.usr, &claims.pwd);
             }
-            Err(e) => trace!("Token validation failed: {}", e)
+            Err(e) => trace!("Token validation failed: {}", e),
         }
     }
     if user_meta.is_none() {
@@ -158,7 +159,8 @@ async fn ws_handler(
                     res,
                     WebSocketStream::from_raw_socket(upgraded, Role::Server, None).await,
                     remote_addr,
-                ).await;
+                )
+                .await;
             }
             Err(e) => {
                 println!("Error upgrading connection: {}", e);
@@ -171,9 +173,12 @@ async fn ws_handler(
     let mut res = Response::new(Body::default());
     *res.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
     *res.version_mut() = ver;
-    res.headers_mut().append(CONNECTION, HeaderValue::from_static("Upgrade"));
-    res.headers_mut().append(UPGRADE, HeaderValue::from_static("websocket"));
-    res.headers_mut().append(SEC_WEBSOCKET_ACCEPT, derived.unwrap().parse().unwrap());
+    res.headers_mut()
+        .append(CONNECTION, HeaderValue::from_static("Upgrade"));
+    res.headers_mut()
+        .append(UPGRADE, HeaderValue::from_static("websocket"));
+    res.headers_mut()
+        .append(SEC_WEBSOCKET_ACCEPT, derived.unwrap().parse().unwrap());
     Ok(res)
 }
 
@@ -221,7 +226,9 @@ pub type AppResources = Arc<Resources>;
 pub async fn run_app() -> anyhow::Result<()> {
     let (resources, tx) = init_app()?;
 
-    let addr: SocketAddr = format!("127.0.0.1:{}", &resources.app_config.port).parse().unwrap();
+    let addr: SocketAddr = format!("127.0.0.1:{}", &resources.app_config.port)
+        .parse()
+        .unwrap();
     let listener = TcpListener::bind(&addr).await?;
     info!("Listening on {}", &addr);
 
