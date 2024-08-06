@@ -143,12 +143,8 @@ static MATCHED_KEYS: LazyLock<Vec<String>> = LazyLock::new(|| {
     new_keys
 });
 
-const EXCLUDED_KEYS: LazyCell<Vec<String>> = LazyCell::new(|| {
-    ["$", "{", "}", "__", "office"]
-        .into_iter()
-        .map(String::from)
-        .collect()
-});
+
+const EXCLUDED_KEYS: [&str; 5] = ["$", "{", "}", "__", "office"];
 
 fn check_java_version(version_str: &str) -> anyhow::Result<()> {
     // (\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[._](\d+))?(?:-(.+))?
