@@ -1,142 +1,146 @@
-use anyhow::{anyhow, bail, Context};
-use log::{debug, trace, warn};
-use std::cell::LazyCell;
+use std::cell::{LazyCell, RefCell};
+use std::collections::HashMap;
+use std::env;
 use std::ffi::OsStr;
 use std::iter::{IntoIterator, Iterator};
-use std::os::windows::process::CommandExt;
 use std::path::{absolute, Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Output, Stdio};
+use std::rc::Rc;
 use std::string::ToString;
+use std::sync::LazyLock;
+
+use anyhow::{anyhow, bail, Context};
+use log::{debug, info, trace, warn};
 use tokio::io::AsyncReadExt;
 use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 
 #[allow(clippy::declare_interior_mutable_const)]
-const MATCHED_KEYS: LazyCell<Vec<String>> = LazyCell::new(|| {
-    let mut keys: Vec<_> = vec![
-        "1.",
-        "bin",
-        "cache",
-        "client",
-        "craft",
-        "data",
-        "download",
-        "eclipse",
-        "mine",
-        "mc",
-        "launch",
-        "hotspot",
-        "java",
-        "jdk",
-        "jre",
-        "zulu",
-        "dragonwell",
-        "jvm",
-        "microsoft",
-        "corretto",
-        "sigma",
-        "mod",
-        "mojang",
-        "net",
-        "netease",
-        "forge",
-        "liteloader",
-        "fabric",
-        "game",
-        "vanilla",
-        "server",
-        "opt",
-        "oracle",
-        "path",
-        "program",
-        "roaming",
-        "local",
-        "run",
-        "runtime",
-        "software",
-        "daemon",
-        "temp",
-        "users",
-        "users",
-        "x64",
-        "x86",
-        "lib",
-        "usr",
-        "env",
-        "ext",
-        "file",
-        "data",
-        "green",
-        "我的",
-        "世界",
-        "前置",
-        "原版",
-        "启动",
-        "启动",
-        "国服",
-        "官启",
-        "官方",
-        "客户",
-        "应用",
-        "整合",
-        "组件",
-        "新建文件夹",
-        "服务",
-        "游戏",
-        "环境",
-        "程序",
-        "网易",
-        "软件",
-        "运行",
-        "高清",
-        "badlion",
-        "blc",
-        "lunar",
-        "tlauncher",
-        "soar",
-        "cheatbreaker",
-        "hmcl",
-        "pcl",
-        "bakaxl",
-        "fsm",
-        "vape",
-        "jetbrains",
+static MATCHED_KEYS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    let keys = [
         "intellij",
-        "idea",
-        "pycharm",
-        "webstorm",
-        "clion",
-        "goland",
-        "rider",
-        "datagrip",
-        "rider",
+        "cache",
+        "官启",
+        "vape",
+        "组件",
+        "我的",
+        "liteloader",
+        "运行",
+        "pcl",
+        "bin",
         "appcode",
-        "phpstorm",
-        "rubymine",
-        "jbr",
-        "android",
-        "mcsm",
-        "msl",
-        "mcsl",
-        "3dmark",
-        "arctime",
-        "library",
+        "untitled folder",
         "content",
+        "microsoft",
+        "program",
+        "lunar",
+        "goland",
+        "download",
+        "corretto",
+        "dragonwell",
+        "客户",
+        "client",
+        "新建文件夹",
+        "badlion",
+        "usr",
+        "temp",
+        "ext",
+        "run",
+        "server",
+        "软件",
+        "software",
+        "arctime",
+        "jdk",
+        "phpstorm",
+        "eclipse",
+        "rider",
+        "x64",
+        "jbr",
+        "环境",
+        "jre",
+        "env",
+        "jvm",
+        "启动",
+        "未命名文件夹",
+        "sigma",
+        "mojang",
+        "daemon",
+        "craft",
+        "oracle",
+        "vanilla",
+        "lib",
+        "file",
+        "msl",
+        "x86",
+        "bakaxl",
+        "高清",
+        "local",
+        "mod",
+        "原版",
+        "webstorm",
+        "应用",
+        "hotspot",
+        "fabric",
+        "整合",
+        "net",
+        "mine",
+        "服务",
+        "opt",
         "home",
-    ]
-    .into_iter()
-    .map(String::from)
-    .collect();
+        "idea",
+        "clion",
+        "path",
+        "android",
+        "green",
+        "zulu",
+        "官方",
+        "forge",
+        "游戏",
+        "blc",
+        "user",
+        "国服",
+        "pycharm",
+        "3dmark",
+        "data",
+        "roaming",
+        "程序",
+        "java",
+        "前置",
+        "soar",
+        "1.",
+        "mc",
+        "世界",
+        "jetbrains",
+        "cheatbreaker",
+        "game",
+        "网易",
+        "launch",
+        "fsm",
+        "root",
+    ];
+
+    let mut new_keys = Vec::with_capacity(keys.len() + 1);
+    keys.into_iter().for_each(|k| {
+        new_keys.push(k.to_string());
+    });
+
     let output = std::process::Command::new("whoami")
         .output()
         .unwrap()
         .stdout;
-    let users = String::from_utf8_lossy(&output)
+    let user = String::from_utf8_lossy(&output)
+        .trim()
         .split("\\")
         .map(String::from)
-        .collect::<Vec<_>>().last().unwrap().to_string();
-    keys.push(users);
-    keys
+        .collect::<Vec<_>>()
+        .last()
+        .map(String::from);
+
+    if let Some(user) = user {
+        new_keys.push(user);
+    }
+
+    new_keys
 });
 
 const EXCLUDED_KEYS: LazyCell<Vec<String>> = LazyCell::new(|| {
@@ -146,10 +150,33 @@ const EXCLUDED_KEYS: LazyCell<Vec<String>> = LazyCell::new(|| {
         .collect()
 });
 
+fn check_java_version(version_str: &str) -> anyhow::Result<()> {
+    // (\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[._](\d+))?(?:-(.+))?
+
+    let mut parts = version_str.splitn(5, |c| c == '.' || c == '_' || c == '-');
+    parts.next().unwrap_or("").parse::<u32>()?; // major version (required)
+    parts.next().unwrap_or("0").parse::<u32>()?; // minor version
+    parts.next().unwrap_or("0").parse::<u32>()?; // patch version
+
+    let build = parts.next();
+    if build.is_none() {
+        return Ok(());
+    }
+
+    if build.is_some_and(|s| s.chars().all(|c| c.is_ascii_digit())) {
+        Ok(())
+    } else {
+        bail!("Invalid java version")
+    }
+
+    // suffix we don't care
+}
+
 fn scan<P: AsRef<Path>>(
     path: P,
-    pendings: &mut Vec<JoinHandle<anyhow::Result<JavaInfo>>>,
+    pending_map: &mut HashMap<String, JoinHandle<anyhow::Result<JavaInfo>>>,
     filename: &'static str,
+    recursive: bool,
 ) -> () {
     if path.as_ref().is_file() {
         return;
@@ -157,97 +184,80 @@ fn scan<P: AsRef<Path>>(
 
     let dir = match path.as_ref().read_dir() {
         Ok(dir) => dir,
-        Err(e) => {
-            warn!("Failed to read dir: {}", e);
-            return;
-        }
+        Err(_) => return,
     };
 
     for entry in dir {
         let entry = match entry {
             Ok(e) => e,
-            Err(err) => {
-                warn!("Failed to read dir: {}", err);
-                return;
-            }
+            Err(_) => return,
         };
         let path = entry.path();
+        let abs_path = absolute(path.as_path()).unwrap();
+        let abs_path_str = abs_path.to_string_lossy().to_string();
         let name = path.file_name().unwrap().to_str().unwrap();
         if path.is_file() {
             if path.file_name().unwrap().to_str().unwrap() == filename {
-                let abs_path = absolute(path.as_path()).unwrap();
                 debug!("Found java: {}", abs_path.display());
+
+                // if pending_map.contains_key(&abs_path_str) {
+                //     info!("ignore java: {}", &abs_path_str);
+                //     continue;
+                // }
 
                 // async get java info
                 #[cfg(windows)]
                 let child = Command::new(abs_path.as_os_str())
                     .arg("-version")
                     .creation_flags(0x08000000) // refer to https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags
-                    .spawn();
+                    .output();
 
                 #[cfg(not(windows))]
-                let child = Command::new(abs_path.as_os_str())
-                    .arg("-version")
-                    .spawn();
+                let child = Command::new(abs_path.as_os_str()).arg("-version").output();
 
-                match child {
-                    Ok(child) => {
-                        let handler = tokio::spawn(async move {
-                            mapper(abs_path.to_str().unwrap().to_string(), child).await
-                        });
+                let abs_path_str_clone = abs_path_str.clone();
+                let handler =
+                    tokio::spawn(async move { mapper(abs_path_str_clone, child.await?).await });
 
-                        pendings.push(handler);
-                    }
-                    Err(err) => {
-                        warn!("Failed to spawn java process: {}", err);
-                        continue;
-                    }
-                }
+                pending_map.insert(abs_path_str, handler);
             }
         } else if (*EXCLUDED_KEYS)
             .iter()
             .any(|k| name.to_lowercase().contains(k))
         {
             continue;
-        } else if (*MATCHED_KEYS)
-            .iter()
-            .any(|k| name.to_ascii_lowercase().contains(k))
+        } else if recursive
+            && (*MATCHED_KEYS)
+                .iter()
+                .any(|k| name.to_ascii_lowercase().contains(k))
         {
-            scan(path, pendings, filename) // recursive
+            scan(path, pending_map, filename, recursive) // recursive
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct JavaInfo {
     pub version: String,
     pub path: String,
     pub arch: String,
 }
 
-async fn mapper(path: String, mut child: Child) -> anyhow::Result<JavaInfo> {
-    let output = child.wait().await?;
-    if output.success() {
-        let mut stdout = String::new();
-        child.stdout.take().ok_or(anyhow!("Failed to read stderr"))?.read_to_string(&mut stdout).await?;
+async fn mapper(path: String, mut output: Output) -> anyhow::Result<JavaInfo> {
+    if output.status.success() {
+        let out = String::from_utf8_lossy(&output.stderr).to_string();
 
-        let mut version = stdout
+        let mut version = out
             .split("\"")
             .nth(1)
             .ok_or(anyhow!("Failed to get java version"))?
             .to_string();
 
-        // check version
-        if version.chars().any(|c| c != '.' && !c.is_ascii_digit()) {
+        if check_java_version(&version).is_err(){
             version = "Unknown".to_string();
         }
 
-        let arch = if stdout.contains("64-Bit") {
-            "x64"
-        } else {
-            "x86"
-        }
-        .to_string();
+        let arch = if out.contains("64-Bit") { "x64" } else { "x86" }.to_string();
 
         Ok(JavaInfo {
             version,
@@ -260,31 +270,52 @@ async fn mapper(path: String, mut child: Child) -> anyhow::Result<JavaInfo> {
 }
 
 pub async fn java_scan() -> anyhow::Result<Vec<JavaInfo>> {
-    let mut handlers = vec![];
+    let mut handle_map = HashMap::new();
+
+    let java_filename = if cfg!(windows) { "java.exe" } else { "java" };
+
+    // scan disk
     #[cfg(windows)]
     {
         for disk in "CDEFGHIJKLMNOPQRSTUVWXYZ".chars() {
             let disk_path = format!("{}:\\", disk);
             let path = Path::new(&disk_path);
             if path.exists() {
-                scan(path, &mut handlers, "java.exe");
+                scan(path, &mut handle_map, java_filename, true);
             }
         }
     }
-
     #[cfg(not(windows))]
     {
         let path = Path::new("/");
-        scan(path, &mut handlers, "java")?;
+        scan(path, &handle_map, java_filename, true, &filter);
+    }
+    trace!("start scan PATH");
+
+    // scan PATH
+    if let Some(paths) = env::var_os("PATH") {
+        for path in env::split_paths(&paths) {
+            let path_str = path.to_string_lossy().to_string();
+
+            if handle_map.keys().any(|k| k.starts_with(&path_str)) {
+                trace!("ignore path: {}", path_str);
+                continue;
+            }
+
+            trace!("scan path: {}", path_str);
+            scan(path, &mut handle_map, java_filename, false)
+        }
     }
 
     let mut rv = vec![];
 
-    for handler in handlers {
-        if let Ok(res) = handler.await {
-            match res {
+    for (_, handle) in handle_map.drain() {
+        if let Ok(info) = handle.await {
+            match info {
                 Ok(info) => rv.push(info),
-                Err(err) => warn!("Failed to get java version: {}", err),
+                Err(ref err) => {
+                    warn!("{:?}", err)
+                }
             }
         }
     }

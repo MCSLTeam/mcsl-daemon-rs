@@ -1,3 +1,3 @@
-mod util;
-
 pub use util::*;
+
+mod util;
