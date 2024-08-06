@@ -10,9 +10,7 @@ use log::{debug, trace, warn};
 use tokio::process::Command;
 use tokio::task::JoinHandle;
 
-use crate::storage::file;
-
-const MATCH_KEYS: [&str; 99] = [
+const MATCH_KEYS: [&str; 101] = [
     "intellij",
     "cache",
     "官启",
@@ -112,6 +110,8 @@ const MATCH_KEYS: [&str; 99] = [
     "launch",
     "fsm",
     "root",
+    "bellsoft",
+    "libericajdk"
 ];
 
 const EXCLUDED_KEYS: [&str; 5] = ["$", "{", "}", "__", "office"];
@@ -192,6 +192,9 @@ fn scan<P>(
         let path = entry.path();
         let abs_path = absolute(path.as_path()).unwrap();
         let abs_path_str = abs_path.to_string_lossy().to_string();
+        if pending_map.contains_key(&abs_path_str) {
+            continue;
+        }
         let name = path.file_name().unwrap().to_str().unwrap();
         if path.is_file() {
             let mut file_match = path
@@ -219,9 +222,9 @@ fn scan<P>(
                 }
                 let child = runner.output();
 
-                let abs_path_str_clone = abs_path_str.clone();
+                let abs_path_str_ = abs_path_str.clone();
                 let handler = tokio::spawn(async move {
-                    JavaInfo::try_from_path_output(abs_path_str_clone, child.await?)
+                    JavaInfo::try_from_path_output(abs_path_str_, child.await?)
                 });
 
                 pending_map.insert(abs_path_str, handler);
@@ -280,6 +283,22 @@ impl JavaInfo {
 pub async fn java_scan() -> Vec<JavaInfo> {
     let mut handle_map = HashMap::new();
 
+    trace!("start scan PATH");
+
+    // scan PATH
+    if let Some(paths) = env::var_os("PATH") {
+        for path in env::split_paths(&paths) {
+            let path_str = path.to_string_lossy().to_string();
+
+            // if handle_map.keys().any(|k: &String| k.starts_with(&path_str)) {
+            //     trace!("ignore path: {}", path_str);
+            //     continue;
+            // }
+
+            trace!("scan path: {}", path_str);
+            scan(path, &mut handle_map, false)
+        }
+    }
     // scan disk
     #[cfg(windows)]
     {
@@ -295,22 +314,6 @@ pub async fn java_scan() -> Vec<JavaInfo> {
     {
         let path = Path::new("/");
         scan(path, &handle_map, true, &filter);
-    }
-    trace!("start scan PATH");
-
-    // scan PATH
-    if let Some(paths) = env::var_os("PATH") {
-        for path in env::split_paths(&paths) {
-            let path_str = path.to_string_lossy().to_string();
-
-            if handle_map.keys().any(|k| k.starts_with(&path_str)) {
-                trace!("ignore path: {}", path_str);
-                continue;
-            }
-
-            trace!("scan path: {}", path_str);
-            scan(path, &mut handle_map, false)
-        }
     }
 
     let mut rv = vec![];

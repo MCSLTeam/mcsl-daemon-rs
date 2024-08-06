@@ -18,7 +18,7 @@ async fn scan_java() -> anyhow::Result<()> {
     for item in rv {
         info!("{} {} {}", item.version, item.path, item.arch);
     }
-    info!("java search elapsed: {}s", begin.elapsed().as_secs());
+    info!("java search elapsed: {}ms", begin.elapsed().as_millis());
     Ok(())
 }
 
