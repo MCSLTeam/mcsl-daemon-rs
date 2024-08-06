@@ -13,13 +13,13 @@ tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "signal"
 log = "0.4"
 anyhow = "1.0"
 jsonwebtoken = "9.3.0"
-dashmap = { version = "6.0.1", features = ["serde"] }
 pretty_env_logger = "0.5.0"
 tokio-tungstenite = "0.23.1"
 http-body-util = "0.1.2"
 hyper-util = { version = "0.1.6", features = ["tokio", "http1", "server-graceful", "server-auto"] }
 futures = "0.3.30"
 hyper = { version = "1.4.1", features = ["server", "http1"] }
+dashmap = { version = "6.0.1", features = ["serde"] }
 
 [profile.release]
 strip = true

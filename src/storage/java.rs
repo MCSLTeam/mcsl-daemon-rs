@@ -6,6 +6,7 @@ use std::process::Output;
 use std::string::ToString;
 
 use anyhow::{anyhow, bail};
+use dashmap::DashMap;
 use log::{debug, trace, warn};
 use tokio::process::Command;
 use tokio::task::JoinHandle;
@@ -170,7 +171,7 @@ pub const JAVA_NAME: &str = "java";
 
 fn scan<P>(
     path: P,
-    pending_map: &mut HashMap<String, JoinHandle<anyhow::Result<JavaInfo>>>,
+    pending_map: &DashMap<String, JoinHandle<anyhow::Result<JavaInfo>>>,
     recursive: bool,
 ) where
     P: AsRef<Path>,
@@ -281,7 +282,7 @@ impl JavaInfo {
 }
 
 pub async fn java_scan() -> Vec<JavaInfo> {
-    let mut handle_map = HashMap::new();
+    let mut handle_map = DashMap::new();
 
     trace!("start scan PATH");
 
@@ -290,13 +291,8 @@ pub async fn java_scan() -> Vec<JavaInfo> {
         for path in env::split_paths(&paths) {
             let path_str = path.to_string_lossy().to_string();
 
-            // if handle_map.keys().any(|k: &String| k.starts_with(&path_str)) {
-            //     trace!("ignore path: {}", path_str);
-            //     continue;
-            // }
-
             trace!("scan path: {}", path_str);
-            scan(path, &mut handle_map, false)
+            scan(path, &handle_map, false)
         }
     }
     // scan disk
@@ -306,7 +302,7 @@ pub async fn java_scan() -> Vec<JavaInfo> {
             let disk_path = format!("{}:\\", disk);
             let path = Path::new(&disk_path);
             if path.exists() {
-                scan(path, &mut handle_map, true);
+                scan(path, &handle_map, true);
             }
         }
     }
@@ -318,7 +314,7 @@ pub async fn java_scan() -> Vec<JavaInfo> {
 
     let mut rv = vec![];
 
-    for (_, handle) in handle_map.drain() {
+    for (_, handle) in handle_map.into_iter() {
         if let Ok(info) = handle.await {
             match info {
                 Ok(info) => rv.push(info),
