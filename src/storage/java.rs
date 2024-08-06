@@ -1,17 +1,16 @@
-use std::cell::{LazyCell, RefCell};
 use std::collections::HashMap;
 use std::env;
-use std::ffi::OsStr;
-use std::iter::{IntoIterator, Iterator};
-use std::path::{absolute, Path, PathBuf};
-use std::process::{Output, Stdio};
-use std::rc::Rc;
+use std::iter::Iterator;
+use std::path::{absolute, Path};
+use std::process::Output;
 use std::string::ToString;
 
-use anyhow::{anyhow, bail, Context};
+use anyhow::{anyhow, bail};
 use log::{debug, trace, warn};
-use tokio::process::{Child, Command};
+use tokio::process::Command;
 use tokio::task::JoinHandle;
+
+use crate::storage::file;
 
 const MATCH_KEYS: [&str; 99] = [
     "intellij",
@@ -115,33 +114,37 @@ const MATCH_KEYS: [&str; 99] = [
     "root",
 ];
 
-//     let mut new_keys = Vec::with_capacity(keys.len() + 1);
-//     keys.into_iter().for_each(|k| {
-//         new_keys.push(k.to_string());
-//     });
-
-//     let output = std::process::Command::new("whoami")
-//         .output()
-//         .unwrap()
-//         .stdout;
-//     let user = String::from_utf8_lossy(&output)
-//         .trim()
-//         .split("\\")
-//         .map(String::from)
-//         .collect::<Vec<_>>()
-//         .last()
-//         .map(String::from);
-
-//     if let Some(user) = user {
-//         new_keys.push(user);
-//     }
-
-//     new_keys
-// });
-
 const EXCLUDED_KEYS: [&str; 5] = ["$", "{", "}", "__", "office"];
 
-fn check_java_version(version_str: &str) -> anyhow::Result<()> {
+static mut USER_NAME: Option<String> = None;
+
+fn get_user_name() -> String {
+    unsafe {
+        // &: Option<T> -> &Option<T>
+        // .as_ref(): Option<T> -> Option<&T>
+        if let Some(user) = USER_NAME.as_ref() {
+            return user.to_owned();
+        }
+
+        let output = std::process::Command::new("whoami")
+            .output()
+            .unwrap()
+            .stdout;
+        let user = String::from_utf8_lossy(&output)
+            .trim()
+            .split("\\")
+            .map(String::from)
+            .collect::<Vec<_>>()
+            .last()
+            .map(String::from)
+            .unwrap();
+
+        USER_NAME = Some(user.clone());
+        user
+    }
+}
+
+fn verify_java_version(version_str: &str) -> anyhow::Result<()> {
     // (\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[._](\d+))?(?:-(.+))?
 
     let mut parts = version_str.splitn(5, |c| c == '.' || c == '_' || c == '-');
@@ -163,10 +166,11 @@ fn check_java_version(version_str: &str) -> anyhow::Result<()> {
     // suffix we don't care
 }
 
+pub const JAVA_NAME: &str = "java";
+
 fn scan<P>(
     path: P,
     pending_map: &mut HashMap<String, JoinHandle<anyhow::Result<JavaInfo>>>,
-    filename: &'static str,
     recursive: bool,
 ) where
     P: AsRef<Path>,
@@ -190,27 +194,35 @@ fn scan<P>(
         let abs_path_str = abs_path.to_string_lossy().to_string();
         let name = path.file_name().unwrap().to_str().unwrap();
         if path.is_file() {
-            if path.file_name().unwrap().to_str().unwrap() == filename {
+            let mut file_match = path
+                .file_stem()
+                .unwrap() // unwrap safe: 你搜索的时候又不会搜到 .. 结尾或者 .. 中间的文件名
+                .to_str()
+                .map(|name| name.to_ascii_lowercase() == JAVA_NAME);
+            #[cfg(windows)]
+            {
+                // 额外匹配 .exe 的后缀
+                file_match = file_match.map(|origin| {
+                    origin && path.extension().map(|ext| ext == "exe").unwrap_or(false)
+                });
+            }
+            if file_match.unwrap_or(false) {
                 debug!("Found java: {}", abs_path.display());
 
-                // if pending_map.contains_key(&abs_path_str) {
-                //     info!("ignore java: {}", &abs_path_str);
-                //     continue;
-                // }
-
                 // async get java info
+                let mut runner = Command::new(abs_path.as_os_str());
+                runner.arg("-version");
                 #[cfg(windows)]
-                let child = Command::new(abs_path.as_os_str())
-                    .arg("-version")
-                    .creation_flags(0x08000000) // refer to https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags
-                    .output();
-
-                #[cfg(not(windows))]
-                let child = Command::new(abs_path.as_os_str()).arg("-version").output();
+                {
+                    runner.creation_flags(0x08000000);
+                    // refer to https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags
+                }
+                let child = runner.output();
 
                 let abs_path_str_clone = abs_path_str.clone();
-                let handler =
-                    tokio::spawn(async move { mapper(abs_path_str_clone, child.await?).await });
+                let handler = tokio::spawn(async move {
+                    JavaInfo::try_from_path_output(abs_path_str_clone, child.await?)
+                });
 
                 pending_map.insert(abs_path_str, handler);
             }
@@ -220,11 +232,12 @@ fn scan<P>(
         {
             continue;
         } else if recursive
-            && MATCH_KEYS
+            && (MATCH_KEYS
                 .iter()
                 .any(|k| name.to_ascii_lowercase().contains(k))
+                || name == get_user_name())
         {
-            scan(path, pending_map, filename, recursive)
+            scan(path, pending_map, recursive)
         }
     }
 }
@@ -237,7 +250,7 @@ pub struct JavaInfo {
 }
 
 impl JavaInfo {
-    async fn mapper(path: String, output: Output) -> anyhow::Result<JavaInfo> {
+    fn try_from_path_output(path: String, output: Output) -> anyhow::Result<JavaInfo> {
         if output.status.success() {
             let out = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -247,7 +260,7 @@ impl JavaInfo {
                 .ok_or(anyhow!("Failed to get java version"))?
                 .to_string();
 
-            if check_java_version(&version).is_err() {
+            if verify_java_version(&version).is_err() {
                 version = "Unknown".to_string();
             }
 
@@ -264,10 +277,8 @@ impl JavaInfo {
     }
 }
 
-pub async fn java_scan() -> anyhow::Result<Vec<JavaInfo>> {
+pub async fn java_scan() -> Vec<JavaInfo> {
     let mut handle_map = HashMap::new();
-
-    let java_filename = if cfg!(windows) { "java.exe" } else { "java" };
 
     // scan disk
     #[cfg(windows)]
@@ -276,14 +287,14 @@ pub async fn java_scan() -> anyhow::Result<Vec<JavaInfo>> {
             let disk_path = format!("{}:\\", disk);
             let path = Path::new(&disk_path);
             if path.exists() {
-                scan(path, &mut handle_map, java_filename, true);
+                scan(path, &mut handle_map, true);
             }
         }
     }
     #[cfg(not(windows))]
     {
         let path = Path::new("/");
-        scan(path, &handle_map, java_filename, true, &filter);
+        scan(path, &handle_map, true, &filter);
     }
     trace!("start scan PATH");
 
@@ -298,7 +309,7 @@ pub async fn java_scan() -> anyhow::Result<Vec<JavaInfo>> {
             }
 
             trace!("scan path: {}", path_str);
-            scan(path, &mut handle_map, java_filename, false)
+            scan(path, &mut handle_map, false)
         }
     }
 
@@ -314,5 +325,5 @@ pub async fn java_scan() -> anyhow::Result<Vec<JavaInfo>> {
             }
         }
     }
-    Ok(rv)
+    rv
 }

@@ -9,9 +9,9 @@ edition = "2021"
 ring = "0.17.8"
 serde = { version = "1.0.204", features = ["derive"] }
 serde_json = "1.0.120"
-tokio = { version = "1.39.2", features = ["rt", "rt-multi-thread", "macros", "signal","process"] }
-log = "0.4.22"
-anyhow = "1.0.86"
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "signal","process"] }
+log = "0.4"
+anyhow = "1.0"
 jsonwebtoken = "9.3.0"
 dashmap = { version = "6.0.1", features = ["serde"] }
 pretty_env_logger = "0.5.0"

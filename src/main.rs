@@ -1,4 +1,3 @@
-use std::fs;
 use log::info;
 use crate::app::run_app;
 
@@ -15,7 +14,7 @@ fn init_logger() {
 
 async fn scan_java() -> anyhow::Result<()> {
     let begin = std::time::Instant::now();
-    let rv = storage::java::java_scan().await?;
+    let rv = storage::java::java_scan().await;
     for item in rv {
         info!("{} {} {}", item.version, item.path, item.arch);
     }
