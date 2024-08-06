@@ -7,142 +7,137 @@ use std::path::{absolute, Path, PathBuf};
 use std::process::{Output, Stdio};
 use std::rc::Rc;
 use std::string::ToString;
-use std::sync::LazyLock;
 
 use anyhow::{anyhow, bail, Context};
-use log::{debug, info, trace, warn};
-use tokio::io::AsyncReadExt;
+use log::{debug, trace, warn};
 use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 
-#[allow(clippy::declare_interior_mutable_const)]
-static MATCHED_KEYS: LazyLock<Vec<String>> = LazyLock::new(|| {
-    let keys = [
-        "intellij",
-        "cache",
-        "官启",
-        "vape",
-        "组件",
-        "我的",
-        "liteloader",
-        "运行",
-        "pcl",
-        "bin",
-        "appcode",
-        "untitled folder",
-        "content",
-        "microsoft",
-        "program",
-        "lunar",
-        "goland",
-        "download",
-        "corretto",
-        "dragonwell",
-        "客户",
-        "client",
-        "新建文件夹",
-        "badlion",
-        "usr",
-        "temp",
-        "ext",
-        "run",
-        "server",
-        "软件",
-        "software",
-        "arctime",
-        "jdk",
-        "phpstorm",
-        "eclipse",
-        "rider",
-        "x64",
-        "jbr",
-        "环境",
-        "jre",
-        "env",
-        "jvm",
-        "启动",
-        "未命名文件夹",
-        "sigma",
-        "mojang",
-        "daemon",
-        "craft",
-        "oracle",
-        "vanilla",
-        "lib",
-        "file",
-        "msl",
-        "x86",
-        "bakaxl",
-        "高清",
-        "local",
-        "mod",
-        "原版",
-        "webstorm",
-        "应用",
-        "hotspot",
-        "fabric",
-        "整合",
-        "net",
-        "mine",
-        "服务",
-        "opt",
-        "home",
-        "idea",
-        "clion",
-        "path",
-        "android",
-        "green",
-        "zulu",
-        "官方",
-        "forge",
-        "游戏",
-        "blc",
-        "user",
-        "国服",
-        "pycharm",
-        "3dmark",
-        "data",
-        "roaming",
-        "程序",
-        "java",
-        "前置",
-        "soar",
-        "1.",
-        "mc",
-        "世界",
-        "jetbrains",
-        "cheatbreaker",
-        "game",
-        "网易",
-        "launch",
-        "fsm",
-        "root",
-    ];
+const MATCH_KEYS: [&str; 99] = [
+    "intellij",
+    "cache",
+    "官启",
+    "vape",
+    "组件",
+    "我的",
+    "liteloader",
+    "运行",
+    "pcl",
+    "bin",
+    "appcode",
+    "untitled folder",
+    "content",
+    "microsoft",
+    "program",
+    "lunar",
+    "goland",
+    "download",
+    "corretto",
+    "dragonwell",
+    "客户",
+    "client",
+    "新建文件夹",
+    "badlion",
+    "usr",
+    "temp",
+    "ext",
+    "run",
+    "server",
+    "软件",
+    "software",
+    "arctime",
+    "jdk",
+    "phpstorm",
+    "eclipse",
+    "rider",
+    "x64",
+    "jbr",
+    "环境",
+    "jre",
+    "env",
+    "jvm",
+    "启动",
+    "未命名文件夹",
+    "sigma",
+    "mojang",
+    "daemon",
+    "craft",
+    "oracle",
+    "vanilla",
+    "lib",
+    "file",
+    "msl",
+    "x86",
+    "bakaxl",
+    "高清",
+    "local",
+    "mod",
+    "原版",
+    "webstorm",
+    "应用",
+    "hotspot",
+    "fabric",
+    "整合",
+    "net",
+    "mine",
+    "服务",
+    "opt",
+    "home",
+    "idea",
+    "clion",
+    "path",
+    "android",
+    "green",
+    "zulu",
+    "官方",
+    "forge",
+    "游戏",
+    "blc",
+    "user",
+    "国服",
+    "pycharm",
+    "3dmark",
+    "data",
+    "roaming",
+    "程序",
+    "java",
+    "前置",
+    "soar",
+    "1.",
+    "mc",
+    "世界",
+    "jetbrains",
+    "cheatbreaker",
+    "game",
+    "网易",
+    "launch",
+    "fsm",
+    "root",
+];
 
-    let mut new_keys = Vec::with_capacity(keys.len() + 1);
-    keys.into_iter().for_each(|k| {
-        new_keys.push(k.to_string());
-    });
+//     let mut new_keys = Vec::with_capacity(keys.len() + 1);
+//     keys.into_iter().for_each(|k| {
+//         new_keys.push(k.to_string());
+//     });
 
-    let output = std::process::Command::new("whoami")
-        .output()
-        .unwrap()
-        .stdout;
-    let user = String::from_utf8_lossy(&output)
-        .trim()
-        .split("\\")
-        .map(String::from)
-        .collect::<Vec<_>>()
-        .last()
-        .map(String::from);
+//     let output = std::process::Command::new("whoami")
+//         .output()
+//         .unwrap()
+//         .stdout;
+//     let user = String::from_utf8_lossy(&output)
+//         .trim()
+//         .split("\\")
+//         .map(String::from)
+//         .collect::<Vec<_>>()
+//         .last()
+//         .map(String::from);
 
-    if let Some(user) = user {
-        new_keys.push(user);
-    }
+//     if let Some(user) = user {
+//         new_keys.push(user);
+//     }
 
-    new_keys
-});
-
+//     new_keys
+// });
 
 const EXCLUDED_KEYS: [&str; 5] = ["$", "{", "}", "__", "office"];
 
@@ -168,12 +163,14 @@ fn check_java_version(version_str: &str) -> anyhow::Result<()> {
     // suffix we don't care
 }
 
-fn scan<P: AsRef<Path>>(
+fn scan<P>(
     path: P,
     pending_map: &mut HashMap<String, JoinHandle<anyhow::Result<JavaInfo>>>,
     filename: &'static str,
     recursive: bool,
-) -> () {
+) where
+    P: AsRef<Path>,
+{
     if path.as_ref().is_file() {
         return;
     }
@@ -217,17 +214,17 @@ fn scan<P: AsRef<Path>>(
 
                 pending_map.insert(abs_path_str, handler);
             }
-        } else if (*EXCLUDED_KEYS)
+        } else if EXCLUDED_KEYS
             .iter()
             .any(|k| name.to_lowercase().contains(k))
         {
             continue;
         } else if recursive
-            && (*MATCHED_KEYS)
+            && MATCH_KEYS
                 .iter()
                 .any(|k| name.to_ascii_lowercase().contains(k))
         {
-            scan(path, pending_map, filename, recursive) // recursive
+            scan(path, pending_map, filename, recursive)
         }
     }
 }
@@ -239,29 +236,31 @@ pub struct JavaInfo {
     pub arch: String,
 }
 
-async fn mapper(path: String, mut output: Output) -> anyhow::Result<JavaInfo> {
-    if output.status.success() {
-        let out = String::from_utf8_lossy(&output.stderr).to_string();
+impl JavaInfo {
+    async fn mapper(path: String, output: Output) -> anyhow::Result<JavaInfo> {
+        if output.status.success() {
+            let out = String::from_utf8_lossy(&output.stderr).to_string();
 
-        let mut version = out
-            .split("\"")
-            .nth(1)
-            .ok_or(anyhow!("Failed to get java version"))?
-            .to_string();
+            let mut version = out
+                .split("\"")
+                .nth(1)
+                .ok_or(anyhow!("Failed to get java version"))?
+                .to_string();
 
-        if check_java_version(&version).is_err(){
-            version = "Unknown".to_string();
+            if check_java_version(&version).is_err() {
+                version = "Unknown".to_string();
+            }
+
+            let arch = if out.contains("64-Bit") { "x64" } else { "x86" }.to_string();
+
+            Ok(JavaInfo {
+                version,
+                path,
+                arch,
+            })
+        } else {
+            Err(anyhow!("Failed to get java version"))
         }
-
-        let arch = if out.contains("64-Bit") { "x64" } else { "x86" }.to_string();
-
-        Ok(JavaInfo {
-            version,
-            path,
-            arch,
-        })
-    } else {
-        Err(anyhow!("Failed to get java version"))
     }
 }
 
