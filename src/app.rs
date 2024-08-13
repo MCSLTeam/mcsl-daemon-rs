@@ -189,7 +189,7 @@ async fn handle_request(
 ) -> Result<Response<Body>, Infallible> {
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/api/v1") => ws_handler(app_resources, req, remote_addr).await,
-        (&Method::GET, "/login") => login_handler(app_resources, req, remote_addr).await,
+        (&Method::POST, "/login") => login_handler(app_resources, req, remote_addr).await,
         _ => {
             // Return 404 not found response.
             Ok(Response::builder()
