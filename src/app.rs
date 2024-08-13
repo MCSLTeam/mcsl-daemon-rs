@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use anyhow::anyhow;
 use hyper::body::Bytes;
-use hyper::header::{CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE};
+use hyper::header::{HeaderName, CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE};
 use hyper::http::HeaderValue;
 use hyper::service::service_fn;
 use hyper::upgrade::Upgraded;
@@ -190,6 +190,11 @@ async fn handle_request(
     match (req.method(), req.uri().path()) {
         (&Method::GET, "/api/v1") => ws_handler(app_resources, req, remote_addr).await,
         (&Method::POST, "/login") => login_handler(app_resources, req, remote_addr).await,
+        (&Method::HEAD, _) => {
+            let mut resp = Response::new(Body::default());
+            resp.headers_mut().append(HeaderName::from_static("x-application"), HeaderValue::from_static("mcsl_daemon_rs"));
+            Ok(resp)
+        }
         _ => {
             // Return 404 not found response.
             Ok(Response::builder()
