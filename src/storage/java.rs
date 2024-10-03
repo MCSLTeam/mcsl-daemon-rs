@@ -309,7 +309,7 @@ pub async fn java_scan() -> Vec<JavaInfo> {
     #[cfg(not(windows))]
     {
         let path = Path::new("/");
-        scan(path, &handle_map, true, &filter);
+        scan(path, &handle_map, true);
     }
 
     let mut rv = vec![];
