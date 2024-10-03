@@ -1,8 +1,10 @@
 use ring::rand::{SecureRandom, SystemRandom};
 
 const BASE64_TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+const BASE64_WEB_SAFE_TABLE: &[u8; 64] =
+    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-pub fn base64_encode(input: &[u8]) -> String {
+pub fn base64_like_encode(table: &[u8; 64], input: &[u8]) -> String {
     let mut output = String::new();
     let mut buffer = 0;
     let mut bits_collected = 0;
@@ -14,14 +16,14 @@ pub fn base64_encode(input: &[u8]) -> String {
         while bits_collected >= 6 {
             bits_collected -= 6;
             let index = (buffer >> bits_collected) & 0b111111;
-            output.push(BASE64_TABLE[index as usize] as char);
+            output.push(table[index as usize] as char);
         }
     }
 
     if bits_collected > 0 {
         buffer <<= 6 - bits_collected;
         let index = buffer & 0b111111;
-        output.push(BASE64_TABLE[index as usize] as char);
+        output.push(table[index as usize] as char);
     }
 
     while output.len() % 4 != 0 {
@@ -29,6 +31,10 @@ pub fn base64_encode(input: &[u8]) -> String {
     }
 
     output
+}
+
+pub fn base64_encode(input: &[u8]) -> String {
+    base64_like_encode(BASE64_TABLE, input)
 }
 
 pub fn base64_decode(input: &str) -> Result<Vec<u8>, &'static str> {
@@ -72,5 +78,5 @@ pub fn get_random_string(len: usize) -> String {
     let mut buf = vec![0u8; len];
     rng.fill(&mut buf)
         .expect("Failed to generate random password");
-    base64_encode(&buf)
+    base64_like_encode(BASE64_WEB_SAFE_TABLE, &buf)
 }
