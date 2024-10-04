@@ -1,14 +1,17 @@
+use regex::Regex;
 use std::collections::HashMap;
 use std::env;
+use std::ffi::OsStr;
 use std::iter::Iterator;
 use std::path::{absolute, Path};
 use std::process::Output;
 use std::string::ToString;
+use std::sync::{Arc, LazyLock, Mutex};
 
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
 use log::{debug, trace, warn};
 use tokio::process::Command;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 
 const MATCH_KEYS: [&str; 101] = [
     "intellij",
@@ -116,63 +119,32 @@ const MATCH_KEYS: [&str; 101] = [
 
 const EXCLUDED_KEYS: [&str; 5] = ["$", "{", "}", "__", "office"];
 
-static mut USER_NAME: Option<String> = None;
+static USER_NAME: LazyLock<String> = LazyLock::new(get_user_name);
+static JAVA_VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[._](\d+))?(?:-(.+))?").unwrap());
+
+type JoinHandleMap<K, V> = Arc<Mutex<HashMap<K, JoinHandle<anyhow::Result<V>>>>>;
 
 fn get_user_name() -> String {
-    unsafe {
-        // &: Option<T> -> &Option<T>
-        // .as_ref(): Option<T> -> Option<&T>
-        if let Some(user) = USER_NAME.as_ref() {
-            return user.to_owned();
-        }
-
-        let output = std::process::Command::new("whoami")
-            .output()
-            .unwrap()
-            .stdout;
-        let user = String::from_utf8_lossy(&output)
-            .trim()
-            .split("\\")
-            .map(String::from)
-            .collect::<Vec<_>>()
-            .last()
-            .map(String::from)
-            .unwrap();
-
-        USER_NAME = Some(user.clone());
-        user
-    }
-}
-
-fn verify_java_version(version_str: &str) -> anyhow::Result<()> {
-    // (\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[._](\d+))?(?:-(.+))?
-
-    let mut parts = version_str.splitn(5, ['.', '_', '-']);
-    parts.next().unwrap_or("").parse::<u32>()?; // major version (required)
-    parts.next().unwrap_or("0").parse::<u32>()?; // minor version
-    parts.next().unwrap_or("0").parse::<u32>()?; // patch version
-
-    let build = parts.next();
-    if build.is_none() {
-        return Ok(());
-    }
-
-    if build.is_some_and(|s| s.chars().all(|c| c.is_ascii_digit())) {
-        Ok(())
-    } else {
-        bail!("Invalid java version")
-    }
-
-    // suffix we don't care
+    let output = std::process::Command::new("whoami")
+        .output()
+        .unwrap()
+        .stdout;
+    let user = String::from_utf8_lossy(&output)
+        .trim()
+        .split("\\")
+        .map(String::from)
+        .collect::<Vec<_>>()
+        .last()
+        .map(String::from)
+        .unwrap();
+    user
 }
 
 pub const JAVA_NAME: &str = "java";
 
-fn scan<P>(
-    path: P,
-    pending_map: &mut HashMap<String, JoinHandle<anyhow::Result<JavaInfo>>>,
-    recursive: bool,
-) where
+fn scan<P>(path: P, join_handle_map: JoinHandleMap<String, JavaInfo>, recursive: bool)
+where
     P: AsRef<Path>,
 {
     if path.as_ref().is_file() {
@@ -192,10 +164,7 @@ fn scan<P>(
         let path = entry.path();
         let abs_path = absolute(path.as_path()).unwrap();
         let abs_path_str = abs_path.to_string_lossy().to_string();
-        if pending_map.contains_key(&abs_path_str) {
-            continue;
-        }
-        let name = path.file_name().unwrap().to_str().unwrap();
+        let name = path.file_name().and_then(OsStr::to_str).unwrap();
         if path.is_file() {
             let file_match = path
                 .file_stem()
@@ -227,7 +196,8 @@ fn scan<P>(
                     JavaInfo::try_from_path_output(abs_path_str_, child.await?)
                 });
 
-                pending_map.insert(abs_path_str, handler);
+                let mut map_guard = join_handle_map.lock().unwrap();
+                map_guard.entry(abs_path_str).or_insert(handler);
             }
         } else if EXCLUDED_KEYS
             .iter()
@@ -238,9 +208,10 @@ fn scan<P>(
             && (MATCH_KEYS
                 .iter()
                 .any(|k| name.to_ascii_lowercase().contains(k))
-                || name == get_user_name())
+                || name == *USER_NAME)
         {
-            scan(path, pending_map, recursive)
+            let join_handle_map = join_handle_map.clone();
+            scan(path, join_handle_map, recursive)
         }
     }
 }
@@ -257,15 +228,11 @@ impl JavaInfo {
         if output.status.success() {
             let out = String::from_utf8_lossy(&output.stderr).to_string();
 
-            let mut version = out
-                .split("\"")
-                .nth(1)
-                .ok_or(anyhow!("Failed to get java version"))?
+            let version = JAVA_VERSION_REGEX
+                .find(&out)
+                .map(|m| m.as_str())
+                .unwrap_or("Unknown")
                 .to_string();
-
-            if verify_java_version(&version).is_err() {
-                version = "Unknown".to_string();
-            }
 
             let arch = if out.contains("64-Bit") { "x64" } else { "x86" }.to_string();
 
@@ -281,17 +248,21 @@ impl JavaInfo {
 }
 
 pub async fn java_scan() -> Vec<JavaInfo> {
-    let mut handle_map = HashMap::new();
+    let join_handle_map = Arc::new(Mutex::new(HashMap::new()));
 
     trace!("start scan PATH");
 
+    let mut task_set = JoinSet::new();
     // scan PATH
     if let Some(paths) = env::var_os("PATH") {
         for path in env::split_paths(&paths) {
             let path_str = path.to_string_lossy().to_string();
 
             trace!("scan path: {}", path_str);
-            scan(path, &mut handle_map, false)
+            let join_handle_map = join_handle_map.clone();
+
+            // add scan task
+            task_set.spawn_blocking(move || scan(path, join_handle_map, true));
         }
     }
     // scan disk
@@ -301,19 +272,26 @@ pub async fn java_scan() -> Vec<JavaInfo> {
             let disk_path = format!("{}:\\", disk);
             let path = Path::new(&disk_path);
             if path.exists() {
-                scan(path, &handle_map, true);
+                let join_handle_map = join_handle_map.clone();
+                // add scan task
+                task_set.spawn_blocking(move || scan(path, join_handle_map, true));
             }
         }
     }
     #[cfg(not(windows))]
     {
         let path = Path::new("/");
-        scan(path, &mut handle_map, true);
+        let join_handle_map = join_handle_map.clone();
+        // add scan task
+        task_set.spawn_blocking(move || scan(path, join_handle_map, true));
     }
 
-    let mut rv = vec![];
+    // wait all scan tasks and then wait all join handles for result
+    while let Some(_) = task_set.join_next().await {}
 
-    for (_, handle) in handle_map.into_iter() {
+    let mut rv = vec![];
+    let mut map_guard = join_handle_map.lock().unwrap();
+    for (_, handle) in map_guard.drain() {
         if let Ok(info) = handle.await {
             match info {
                 Ok(info) => rv.push(info),
