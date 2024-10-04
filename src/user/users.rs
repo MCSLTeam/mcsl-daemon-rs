@@ -61,13 +61,13 @@ impl UsersManager for Users {
         if let Some(name) = JwtClaims::extract_usr(token) {
             // try get user token secret
             let user_query = self.user_db.lookup(&name).await;
-            if let Some(secret) = user_query.as_ref().and_then(|ref row| Some(&row.secret)) {
+            if let Some(secret) = user_query.as_ref().map(|row| &row.secret) {
                 // validate token
                 return JwtClaims::from_token(token, secret)
                     .ok()
                     .and_then(|claims| {
                         let user_row = user_query.unwrap(); // unwrap is safe
-                        if &user_row.name == &claims.usr {
+                        if user_row.name == claims.usr {
                             Some(User {
                                 usr: user_row.name,
                                 meta: UserMeta {

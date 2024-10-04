@@ -6,7 +6,6 @@ use futures::{SinkExt, StreamExt, TryFutureExt};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
 use log::info;
-use serde::Serialize;
 use serde_json::{json, Value};
 use tokio::select;
 use tokio::task::JoinError;
@@ -20,15 +19,14 @@ use crate::app::AppResources;
 use crate::remote::event::Events;
 
 pub struct WsBehavior {
+    #[allow(dead_code)]
     app_resources: AppResources,
+
+    #[allow(dead_code)]
     event_sender: UnboundedSender<(Events, Value)>, // TODO 实现event
+
     sender: UnboundedSender<Message>,
     addr: SocketAddr,
-}
-
-#[derive(Serialize, Debug, Clone, Copy)]
-struct HeartBeatTemplate {
-    time: u64,
 }
 
 impl WsBehavior {

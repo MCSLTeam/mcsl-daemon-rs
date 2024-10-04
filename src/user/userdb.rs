@@ -1,16 +1,16 @@
 use anyhow::bail;
 use core::str;
-use log::{debug, error};
+use log::debug;
 use rusqlite::{
     named_params,
     types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef},
-    Connection, Transaction,
 };
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
 /// User database : name, secret, password_hash, group, permissions
+#[derive(Clone)]
 pub struct UserDb {
     conn: Arc<Mutex<Option<rusqlite::Connection>>>,
 }
@@ -48,14 +48,8 @@ impl ToSql for PermissionGroup {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Permission(String);
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Permissions(Vec<Permission>);
-
-impl Default for Permissions {
-    fn default() -> Self {
-        Self(vec![])
-    }
-}
 
 impl FromSql for Permissions {
     fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
@@ -164,21 +158,13 @@ impl UserDb {
         Ok(())
     }
 
-    pub async fn close(&self) -> anyhow::Result<()> {
-        let conn_shared = Arc::clone(&self.conn);
-        let result = tokio::task::spawn_blocking(move || {
-            if let Some(conn) = conn_shared.lock().unwrap().take() {
-                if let Err((_, e)) = conn.close() {
-                    bail!("Failed to close connection: {}", e);
-                }
-            } else {
-                bail!("Connection is not open");
+    pub fn close(&self) -> anyhow::Result<()> {
+        if let Some(conn) = self.conn.lock().unwrap().take() {
+            if let Err((_, e)) = conn.close() {
+                bail!("Failed to close connection: {}", e);
             }
-            Ok(())
-        })
-        .await?;
-
-        result.map_err(Into::into) // Convert rusqlite errors to anyhow::Error
+        }
+        Ok(())
     }
 
     pub async fn lookup(&self, name: &str) -> Option<UserRow> {
@@ -353,10 +339,6 @@ impl UserDb {
 
 impl Drop for UserDb {
     fn drop(&mut self) {
-        if let Some(conn) = self.conn.lock().unwrap().take() {
-            if let Err((_, e)) = conn.close() {
-                error!("Failed to close connection: {}", e);
-            }
-        }
+        let _ = self.close();
     }
 }

@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::env;
 use std::iter::Iterator;
 use std::path::{absolute, Path};
@@ -148,7 +147,7 @@ fn get_user_name() -> String {
 fn verify_java_version(version_str: &str) -> anyhow::Result<()> {
     // (\d+)(?:\.(\d+))?(?:\.(\d+))?(?:[._](\d+))?(?:-(.+))?
 
-    let mut parts = version_str.splitn(5, |c| c == '.' || c == '_' || c == '-');
+    let mut parts = version_str.splitn(5, ['.', '_', '-']);
     parts.next().unwrap_or("").parse::<u32>()?; // major version (required)
     parts.next().unwrap_or("0").parse::<u32>()?; // minor version
     parts.next().unwrap_or("0").parse::<u32>()?; // patch version
@@ -198,7 +197,7 @@ fn scan<P>(
         }
         let name = path.file_name().unwrap().to_str().unwrap();
         if path.is_file() {
-            let mut file_match = path
+            let file_match = path
                 .file_stem()
                 .unwrap() // unwrap safe: 你搜索的时候又不会搜到 .. 结尾或者 .. 中间的文件名
                 .to_str()
@@ -282,7 +281,7 @@ impl JavaInfo {
 }
 
 pub async fn java_scan() -> Vec<JavaInfo> {
-    let mut handle_map = DashMap::new();
+    let handle_map = DashMap::new();
 
     trace!("start scan PATH");
 

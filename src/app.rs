@@ -28,7 +28,7 @@ use tokio_tungstenite::WebSocketStream;
 
 use crate::remote::ws_behavior::WsBehavior;
 use crate::storage::AppConfig;
-use crate::user::{JwtClaims, Users, UsersManager};
+use crate::user::{Users, UsersManager};
 
 type Body = http_body_util::Full<Bytes>;
 
@@ -137,7 +137,7 @@ async fn ws_handler(
     });
 
     let user = if let Some(token) = token {
-        app_resources.users.auth_token(&token).await
+        app_resources.users.auth_token(token).await
     } else {
         None
     };
@@ -305,5 +305,6 @@ pub async fn run_app() -> anyhow::Result<()> {
         handler.await?;
     }
     trace!("all ws handlers finished");
+
     Ok(())
 }
