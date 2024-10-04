@@ -82,13 +82,14 @@ async fn login_handler(
         .expired
         .map(|s| s.parse::<u64>().unwrap())
         .unwrap_or(30);
-    match app_resources.users.authenticate(&params.usr, &params.pwd) {
-        Some(_) => {
-            let jwt_claims =
-                JwtClaims::new(params.usr.to_string(), params.pwd.to_string(), expired);
-            let token = jwt_claims.to_token(&app_resources.app_config.secret);
-            Ok(Response::new(Body::from(token)))
-        }
+    match app_resources.users.auth(&params.usr, &params.pwd).await {
+        Some(_) => match app_resources.users.gen_token(&params.usr, expired).await {
+            Ok(token) => Ok(Response::new(Body::from(token))),
+            Err(e) => Ok(Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::from(e.to_string()))
+                .unwrap()),
+        },
         None => {
             let response = "Unauthorized";
             Ok(Response::builder()
@@ -135,16 +136,13 @@ async fn ws_handler(
         })
     });
 
-    let mut user_meta = None;
-    if let Some(token) = token {
-        match JwtClaims::from_token(token, &app_resources.app_config.secret) {
-            Ok(claims) => {
-                user_meta = app_resources.users.authenticate(&claims.usr, &claims.pwd);
-            }
-            Err(e) => trace!("Token validation failed: {}", e),
-        }
-    }
-    if user_meta.is_none() {
+    let user = if let Some(token) = token {
+        app_resources.users.auth_token(&token).await
+    } else {
+        None
+    };
+
+    if user.is_none() {
         return Ok(Response::builder()
             .status(StatusCode::UNAUTHORIZED)
             .body(Body::from("Unauthorized"))
@@ -192,7 +190,10 @@ async fn handle_request(
         (&Method::POST, "/login") => login_handler(app_resources, req, remote_addr).await,
         (&Method::HEAD, _) => {
             let mut resp = Response::new(Body::default());
-            resp.headers_mut().append(HeaderName::from_static("x-application"), HeaderValue::from_static("mcsl_daemon_rs"));
+            resp.headers_mut().append(
+                HeaderName::from_static("x-application"),
+                HeaderValue::from_static("mcsl_daemon_rs"),
+            );
             Ok(resp)
         }
         _ => {
@@ -212,10 +213,12 @@ pub struct Resources {
     ws_handlers: Mutex<Vec<JoinHandle<()>>>,
 }
 
-fn init_app() -> anyhow::Result<(Resources, Sender<bool>)> {
+async fn init_app_res() -> anyhow::Result<(Resources, Sender<bool>)> {
     let config = AppConfig::new();
-    let users = Users::new("users.json");
-    users.fix_admin()?;
+
+    let users = Users::build("users.db").await?;
+    users.fix_admin().await?;
+
     let (tx, rx) = watch::channel(false);
     let resources = Resources {
         app_config: config,
@@ -229,7 +232,7 @@ fn init_app() -> anyhow::Result<(Resources, Sender<bool>)> {
 pub type AppResources = Arc<Resources>;
 
 pub async fn run_app() -> anyhow::Result<()> {
-    let (resources, tx) = init_app()?;
+    let (resources, tx) = init_app_res().await?;
 
     let addr: SocketAddr = format!("127.0.0.1:{}", &resources.app_config.port)
         .parse()

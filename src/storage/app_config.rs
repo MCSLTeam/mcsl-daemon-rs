@@ -19,7 +19,7 @@ impl Config for AppConfig {
 impl AppConfig {
     pub fn new() -> AppConfig {
         Self::load_config_or_default("config.json", || AppConfig {
-            port: 11451,
+            port: 11452,
             secret: utils::get_random_string(32),
         })
         .unwrap()

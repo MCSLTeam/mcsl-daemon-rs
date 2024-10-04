@@ -6,7 +6,7 @@ use ring::pbkdf2::{self, PBKDF2_HMAC_SHA256};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 
-use crate::utils::{base64_decode, base64_encode};
+use crate::utils::{self, base64_decode, base64_encode};
 
 const SALT_LEN: usize = 16;
 const CREDENTIAL_LEN: usize = 32;
@@ -19,11 +19,10 @@ pub struct JwtClaims {
     iss: String,
     aud: String,
     pub usr: String,
-    pub pwd: String,
 }
 
 impl JwtClaims {
-    pub fn new(usr: String, pwd: String, exp: u64) -> Self {
+    pub fn new(usr: String, exp: u64) -> Self {
         Self {
             exp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
@@ -33,7 +32,6 @@ impl JwtClaims {
             iss: "MCServerLauncher.Daemon".to_string(),
             aud: "MCServerLauncher.Daemon".to_string(),
             usr,
-            pwd,
         }
     }
 
@@ -50,6 +48,25 @@ impl JwtClaims {
         )
         .map(|data| data.claims)
     }
+
+    pub fn extract_usr(token: &str) -> Option<String> {
+        // 跳过校验获取claims
+        let parts: Vec<&str> = token.split('.').collect();
+        if parts.len() != 3 {
+            return None;
+        }
+        if let Ok(claims_text) = utils::base64_decode(parts[1]) {
+            if let Ok(claims_json) = std::str::from_utf8(&claims_text) {
+                if let Ok(claims) = serde_json::from_str::<JwtClaims>(claims_json) {
+                    return Some(claims.usr);
+                }
+            }
+        }
+        None
+    }
+}
+
+impl JwtClaims {
     pub fn to_token(&self, secret: &str) -> String {
         encode(
             &Header::default(),

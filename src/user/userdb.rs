@@ -4,7 +4,7 @@ use log::{debug, error};
 use rusqlite::{
     named_params,
     types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef},
-    Transaction,
+    Connection, Transaction,
 };
 use std::sync::{Arc, Mutex};
 
@@ -99,6 +99,43 @@ impl UserDb {
     }
 }
 
+// pub trait DbExecutor {
+//     fn run<F, T>(conn: &mut Connection, f: F) -> anyhow::Result<T>
+//     where
+//         F: for<'b> FnOnce(&'b mut Self) -> anyhow::Result<T>;
+// }
+
+// impl DbExecutor for Connection {
+//     fn run<F, T>(conn: &mut Connection, f: F) -> anyhow::Result<T>
+//     where
+//         F: FnOnce(&mut Connection) -> anyhow::Result<T>,
+//     {
+//         f(conn)
+//     }
+// }
+
+// impl<'a> DbExecutor for Transaction<'a> {
+//     fn run<F, T>(conn: &mut Connection, f: F) -> anyhow::Result<T>
+//     where
+//         F: for<'b> FnOnce(&'b mut Transaction<'a>) -> anyhow::Result<T>,
+//     {
+//         // 在这里调用 transaction()，编译器将理解生命周期
+//         let mut transaction = conn.transaction()?;
+
+//         // 执行闭包
+//         let result = f(&mut transaction);
+
+//         // 提交或回滚
+//         if result.is_ok() {
+//             transaction.commit()?;
+//         } else {
+//             transaction.rollback()?;
+//         }
+
+//         result
+//     }
+// }
+
 impl UserDb {
     pub async fn open(&self, db: &str) -> anyhow::Result<()> {
         let conn = rusqlite::Connection::open(db)?;
@@ -168,6 +205,31 @@ impl UserDb {
                 None
             }
         }
+    }
+
+    pub async fn user_rows(&self) -> anyhow::Result<Vec<UserRow>> {
+        let rows = self
+            .execute_async(|conn| {
+                let mut stmt = conn.prepare("SELECT * FROM users;")?;
+                let mut rows = vec![];
+                stmt.query_map([], |row| {
+                    Ok(UserRow {
+                        name: row.get(0)?,
+                        secret: row.get(1)?,
+                        password_hash: row.get(2)?,
+                        group: row.get(3)?,
+                        permissions: row.get(4)?,
+                    })
+                })?
+                .for_each(|row| {
+                    if let Ok(row) = row {
+                        rows.push(row);
+                    }
+                });
+                Ok(rows)
+            })
+            .await?;
+        Ok(rows)
     }
 
     pub async fn has_user(&self, name: &str) -> bool {
