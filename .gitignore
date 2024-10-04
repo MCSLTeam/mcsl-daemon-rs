@@ -3,3 +3,5 @@
 *.json
 *.zip
 *.idea
+*.db
+*.DS_Store
