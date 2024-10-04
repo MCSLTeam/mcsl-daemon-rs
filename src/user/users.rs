@@ -184,7 +184,7 @@ impl Users {
         if !self.user_db.has_user("admin").await {
             let random_pwd = utils::get_random_string(16);
             info!(
-                " [Users] *** generate admin account: name=admin, pwd={}",
+                "[Users] *** generate admin account: name=admin, pwd={}",
                 random_pwd
             );
             self.add_user(

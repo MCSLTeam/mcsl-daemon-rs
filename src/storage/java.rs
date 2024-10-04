@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::iter::Iterator;
 use std::path::{absolute, Path};
@@ -5,7 +6,6 @@ use std::process::Output;
 use std::string::ToString;
 
 use anyhow::{anyhow, bail};
-use dashmap::DashMap;
 use log::{debug, trace, warn};
 use tokio::process::Command;
 use tokio::task::JoinHandle;
@@ -111,7 +111,7 @@ const MATCH_KEYS: [&str; 101] = [
     "fsm",
     "root",
     "bellsoft",
-    "libericajdk"
+    "libericajdk",
 ];
 
 const EXCLUDED_KEYS: [&str; 5] = ["$", "{", "}", "__", "office"];
@@ -170,7 +170,7 @@ pub const JAVA_NAME: &str = "java";
 
 fn scan<P>(
     path: P,
-    pending_map: &DashMap<String, JoinHandle<anyhow::Result<JavaInfo>>>,
+    pending_map: &mut HashMap<String, JoinHandle<anyhow::Result<JavaInfo>>>,
     recursive: bool,
 ) where
     P: AsRef<Path>,
@@ -281,7 +281,7 @@ impl JavaInfo {
 }
 
 pub async fn java_scan() -> Vec<JavaInfo> {
-    let handle_map = DashMap::new();
+    let mut handle_map = HashMap::new();
 
     trace!("start scan PATH");
 
@@ -291,7 +291,7 @@ pub async fn java_scan() -> Vec<JavaInfo> {
             let path_str = path.to_string_lossy().to_string();
 
             trace!("scan path: {}", path_str);
-            scan(path, &handle_map, false)
+            scan(path, &mut handle_map, false)
         }
     }
     // scan disk
@@ -308,7 +308,7 @@ pub async fn java_scan() -> Vec<JavaInfo> {
     #[cfg(not(windows))]
     {
         let path = Path::new("/");
-        scan(path, &handle_map, true);
+        scan(path, &mut handle_map, true);
     }
 
     let mut rv = vec![];

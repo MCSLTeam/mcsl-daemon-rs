@@ -1,5 +1,5 @@
-use log::info;
 use crate::app::run_app;
+use log::info;
 
 mod app;
 mod remote;
@@ -8,7 +8,9 @@ mod user;
 mod utils;
 
 fn init_logger() {
-    unsafe { std::env::set_var("RUST_LOG", "trace"); }
+    unsafe {
+        std::env::set_var("RUST_LOG", "trace");
+    }
     pretty_env_logger::init();
 }
 

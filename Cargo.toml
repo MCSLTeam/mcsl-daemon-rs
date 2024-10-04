@@ -30,7 +30,6 @@ hyper-util = { version = "0.1.6", features = [
 ] }
 futures = "0.3.30"
 hyper = { version = "1.4.1", features = ["server", "http1"] }
-dashmap = { version = "6.0.1", features = ["serde"] }
 rusqlite = "0.32.1"
 
 [profile.release]
