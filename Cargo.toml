@@ -33,6 +33,9 @@ hyper = { version = "1.4.1", features = ["server", "http1"] }
 rusqlite = "0.32.1"
 regex = "1.11.0"
 
+[features]
+sqlite_bundled = ["rusqlite/bundled"]
+
 [profile.release]
 strip = true
 opt-level = "z"
