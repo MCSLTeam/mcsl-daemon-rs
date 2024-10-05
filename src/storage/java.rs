@@ -1,12 +1,13 @@
 use regex::Regex;
 use std::collections::HashMap;
-use std::env;
 use std::ffi::OsStr;
 use std::iter::Iterator;
 use std::path::{absolute, Path};
 use std::process::Output;
 use std::string::ToString;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock};
+use std::{env, fs};
+use tokio::sync::Mutex;
 
 use anyhow::anyhow;
 use log::{debug, trace, warn};
@@ -166,7 +167,7 @@ where
         let abs_path_str = abs_path.to_string_lossy().to_string();
         let name = path.file_name().and_then(OsStr::to_str).unwrap();
         if path.is_file() {
-            let file_match = path
+            let mut file_match = path
                 .file_stem()
                 .unwrap() // unwrap safe: 你搜索的时候又不会搜到 .. 结尾或者 .. 中间的文件名
                 .to_str()
@@ -196,7 +197,7 @@ where
                     JavaInfo::try_from_path_output(abs_path_str_, child.await?)
                 });
 
-                let mut map_guard = join_handle_map.lock().unwrap();
+                let mut map_guard = futures::executor::block_on(join_handle_map.lock());
                 map_guard.entry(abs_path_str).or_insert(handler);
             }
         } else if EXCLUDED_KEYS
@@ -270,11 +271,13 @@ pub async fn java_scan() -> Vec<JavaInfo> {
     {
         for disk in "CDEFGHIJKLMNOPQRSTUVWXYZ".chars() {
             let disk_path = format!("{}:\\", disk);
-            let path = Path::new(&disk_path);
-            if path.exists() {
+            if fs::metadata(&disk_path).is_ok() {
                 let join_handle_map = join_handle_map.clone();
                 // add scan task
-                task_set.spawn_blocking(move || scan(path, join_handle_map, true));
+                task_set.spawn_blocking(move || {
+                    let path = Path::new(&disk_path);
+                    scan(path, join_handle_map, true)
+                });
             }
         }
     }
@@ -287,10 +290,10 @@ pub async fn java_scan() -> Vec<JavaInfo> {
     }
 
     // wait all scan tasks and then wait all join handles for result
-    while let Some(_) = task_set.join_next().await {}
+    while task_set.join_next().await.is_some() {}
 
     let mut rv = vec![];
-    let mut map_guard = join_handle_map.lock().unwrap();
+    let mut map_guard = join_handle_map.lock().await;
     for (_, handle) in map_guard.drain() {
         if let Ok(info) = handle.await {
             match info {
