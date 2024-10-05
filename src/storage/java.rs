@@ -167,19 +167,20 @@ where
         let abs_path_str = abs_path.to_string_lossy().to_string();
         let name = path.file_name().and_then(OsStr::to_str).unwrap();
         if path.is_file() {
-            let mut file_match = path
+            let file_match = path
                 .file_stem()
                 .unwrap() // unwrap safe: 你搜索的时候又不会搜到 .. 结尾或者 .. 中间的文件名
                 .to_str()
-                .map(|name| name.to_ascii_lowercase() == JAVA_NAME);
-            #[cfg(windows)]
-            {
-                // 额外匹配 .exe 的后缀
-                file_match = file_match.map(|origin| {
-                    origin && path.extension().map(|ext| ext == "exe").unwrap_or(false)
-                });
-            }
-            if file_match.unwrap_or(false) {
+                .map(|name| {
+                    let name_lower = name.to_ascii_lowercase();
+                    if cfg!(windows) {
+                        name_lower == JAVA_NAME && path.extension().map_or(false, |ext| ext == "exe")
+                    } else {
+                        name_lower == JAVA_NAME
+                    }
+                })
+                .unwrap_or(false);
+            if file_match {
                 debug!("Found java: {}", abs_path.display());
 
                 // async get java info
