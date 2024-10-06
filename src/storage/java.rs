@@ -6,13 +6,15 @@ use std::path::{absolute, Path};
 use std::process::Output;
 use std::string::ToString;
 use std::sync::{Arc, LazyLock};
-use std::{env, fs};
+use std::env;
 use tokio::sync::Mutex;
 
 use anyhow::anyhow;
 use log::{debug, trace, warn};
 use tokio::process::Command;
 use tokio::task::{JoinHandle, JoinSet};
+
+use crate::utils::AsyncFetchable;
 
 const MATCH_KEYS: [&str; 101] = [
     "intellij",
@@ -174,7 +176,8 @@ where
                 .map(|name| {
                     let name_lower = name.to_ascii_lowercase();
                     if cfg!(windows) {
-                        name_lower == JAVA_NAME && path.extension().map_or(false, |ext| ext == "exe")
+                        name_lower == JAVA_NAME
+                            && path.extension().map_or(false, |ext| ext == "exe")
                     } else {
                         name_lower == JAVA_NAME
                     }
@@ -306,4 +309,10 @@ pub async fn java_scan() -> Vec<JavaInfo> {
         }
     }
     rv
+}
+
+impl AsyncFetchable for Vec<JavaInfo> {
+    async fn fetch() -> Self {
+        java_scan().await
+    }
 }

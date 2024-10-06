@@ -1,9 +1,13 @@
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 
+// 使用 async trait 方法
+pub trait AsyncFetchable: Clone {
+    async fn fetch() -> Self;
+}
+
+#[derive(Clone)]
 enum TimedCacheState<T>
 where
     T: Clone,
@@ -13,41 +17,50 @@ where
 }
 
 #[derive(Clone)]
-pub struct AsyncTimedCache<T, F>
-where
-    T: Clone,
-    F: Fn() -> Pin<Box<dyn Future<Output = T>>> + 'static,
-{
+pub struct AsyncTimedCache<T: AsyncFetchable> {
     state: Arc<Mutex<TimedCacheState<T>>>,
-    func: F,
     duration: Duration,
 }
 
-impl<T, F> AsyncTimedCache<T, F>
-where
-    T: Clone,
-    F: Fn() -> Pin<Box<dyn Future<Output = T>>> + 'static,
-{
-    #[allow(dead_code)]
-    pub fn new(func: F, duration: Duration) -> Self {
+impl<T: AsyncFetchable> AsyncTimedCache<T> {
+    pub fn new(duration: Duration) -> Self {
         Self {
             state: Arc::new(Mutex::new(TimedCacheState::None)),
-            func,
             duration,
         }
     }
 
-    #[allow(dead_code)]
     pub async fn get(&self) -> T {
         let mut state_guard = self.state.lock().await;
-        if let TimedCacheState::Cached((ref last_modified, ref value)) = *state_guard {
-            if last_modified.elapsed() < self.duration {
-                return value.clone();
+        match &*state_guard {
+            TimedCacheState::Cached((last_modified, value))
+                if last_modified.elapsed() < self.duration =>
+            {
+                value.clone()
+            }
+            _ => {
+                let value = T::fetch().await;
+                *state_guard = TimedCacheState::Cached((Instant::now(), value.clone()));
+                value
             }
         }
-        let value = (self.func)().await;
-        let new_state = TimedCacheState::Cached((Instant::now(), value.clone()));
-        *state_guard = new_state;
-        value
     }
+}
+
+// 为String类型实现AsyncFetchable特征（示例）
+impl AsyncFetchable for String {
+    async fn fetch() -> Self {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        "Hello, world!".to_string()
+    }
+}
+
+#[tokio::test]
+async fn test_async_cache() {
+    let cache = AsyncTimedCache::<String>::new(Duration::from_secs(2));
+    let value = cache.get().await;
+    assert_eq!(value, "Hello, world!");
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let value = cache.get().await;
+    assert_eq!(value, "Fetched data");
 }
