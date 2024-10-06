@@ -57,10 +57,22 @@ impl AsyncFetchable for String {
 
 #[tokio::test]
 async fn test_async_cache() {
+    // create cache
     let cache = AsyncTimedCache::<String>::new(Duration::from_secs(2));
     let value = cache.get().await;
     assert_eq!(value, "Hello, world!");
-    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // get cached value
+    let begin = Instant::now();
     let value = cache.get().await;
-    assert_eq!(value, "Fetched data");
+    assert_eq!(value, "Hello, world!");
+    let elapsed = begin.elapsed();
+    assert!(elapsed < Duration::from_millis(1)); // cache hit
+
+    // sleep for 3 seconds
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let begin = Instant::now();
+    let value = cache.get().await;
+    assert_eq!(value, "Hello, world!");
+    assert_eq!(begin.elapsed() >= Duration::from_secs(1), true); // cache miss
 }
