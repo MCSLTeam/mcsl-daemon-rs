@@ -26,11 +26,23 @@ use tokio::{net::TcpListener, select, sync::watch};
 use tokio_tungstenite::tungstenite::{handshake::derive_accept_key, protocol::Role};
 use tokio_tungstenite::WebSocketStream;
 
+use crate::remote::action::Actions;
 use crate::remote::ws_behavior::WsBehavior;
-use crate::storage::AppConfig;
+use crate::storage::{AppConfig, Files};
 use crate::user::{Users, UsersManager};
 
 type Body = http_body_util::Full<Bytes>;
+
+pub struct Resources {
+    pub app_config: AppConfig,
+    pub users: Users,
+    pub actions: Actions,
+    pub files: Arc<Files>,
+    pub cancel_token: Receiver<bool>,
+    ws_handlers: Mutex<Vec<JoinHandle<()>>>,
+}
+
+pub type AppResources = Arc<Resources>;
 
 #[derive(Debug, Deserialize)]
 struct LoginParams {
@@ -206,30 +218,25 @@ async fn handle_request(
     }
 }
 
-pub struct Resources {
-    pub app_config: AppConfig,
-    pub users: Users,
-    pub cancel_token: Receiver<bool>,
-    ws_handlers: Mutex<Vec<JoinHandle<()>>>,
-}
-
 async fn init_app_res() -> anyhow::Result<(Resources, Sender<bool>)> {
     let config = AppConfig::new();
-
     let users = Users::build("users.db").await?;
+    let files = Arc::new(Files::new(config.clone()));
+    let actions = Actions::new(files.clone());
+
     users.fix_admin().await?;
 
     let (tx, rx) = watch::channel(false);
     let resources = Resources {
         app_config: config,
         users,
+        files,
+        actions,
         ws_handlers: Mutex::new(vec![]),
         cancel_token: rx,
     };
     Ok((resources, tx))
 }
-
-pub type AppResources = Arc<Resources>;
 
 pub async fn run_app() -> anyhow::Result<()> {
     let (resources, tx) = init_app_res().await?;

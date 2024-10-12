@@ -15,6 +15,7 @@ tokio = { version = "1", features = [
     "macros",
     "signal",
     "process",
+    "fs",
 ] }
 log = "0.4"
 anyhow = "1.0"
@@ -25,20 +26,24 @@ http-body-util = "0.1.2"
 hyper-util = { version = "0.1.6", features = [
     "tokio",
     "http1",
-    "server-graceful",
     "server-auto",
 ] }
 futures = "0.3.30"
 hyper = { version = "1.4.1", features = ["server", "http1"] }
 rusqlite = "0.32.1"
 regex = "1.11.0"
+uuid = { version = "1.10.0", features = ["v4", "serde"] }
+sha1 = "0.10.6"
+scc = "2.2.0"
+ahash = "0.8.11"
+chrono = "0.4.38"
 
 [features]
 sqlite_bundled = ["rusqlite/bundled"]
 
 [profile.release]
 strip = true
-opt-level = "z"
-lto = true
+opt-level = 3
+lto = "fat"
 codegen-units = 1 # default is 16
 panic = "abort"   # dangerous

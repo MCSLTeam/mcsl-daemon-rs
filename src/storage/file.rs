@@ -1,4 +1,4 @@
-use std::fs;
+use crate::utils::U64Remain;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -12,11 +12,11 @@ pub trait FileIoWithBackup {
             let backup_path = path.with_extension("bak");
 
             // Create a backup of the file
-            fs::copy(path, backup_path)?;
+            std::fs::copy(path, backup_path)?;
         }
 
         // Write the content to the file
-        fs::write(path, content)?;
+        std::fs::write(path, content)?;
 
         Ok(())
     }
@@ -28,7 +28,7 @@ pub trait Config: FileIoWithBackup {
 
     fn load_config<P: AsRef<Path>>(path: P) -> anyhow::Result<Self::ConfigType> {
         let path = path.as_ref();
-        let content = fs::read_to_string(path)?;
+        let content = std::fs::read_to_string(path)?;
         let config: Self::ConfigType = serde_json::from_str(&content)?;
         Ok(config)
     }
@@ -44,13 +44,66 @@ pub trait Config: FileIoWithBackup {
         path: P,
         default: F,
     ) -> anyhow::Result<Self::ConfigType> {
-        match fs::metadata(path.as_ref()) {
+        match std::fs::metadata(path.as_ref()) {
             Ok(metadata) if metadata.is_file() => Self::load_config(path),
             _ => {
                 let config = default();
                 Self::save_config(path, &config)?;
                 Ok(config)
             }
+        }
+    }
+}
+
+// FileLoadInfo 类似父类
+pub struct FileLoadInfo {
+    pub size: u64,
+    pub file: tokio::fs::File,
+    pub sha1: Option<String>,
+    pub path: String,
+    pub remain: U64Remain,
+}
+
+impl FileLoadInfo {
+    pub fn new(size: u64, path: String, file: tokio::fs::File, sha1: Option<String>) -> Self {
+        Self {
+            size,
+            file,
+            sha1: sha1.map(|v| v.to_lowercase()),
+            path,
+            remain: U64Remain::new(0, size),
+        }
+    }
+}
+
+pub struct FileUploadInfo {
+    pub base: FileLoadInfo,
+    pub chunk_size: u64,
+}
+
+impl FileUploadInfo {
+    pub fn new(
+        size: u64,
+        path: String,
+        file: tokio::fs::File,
+        sha1: Option<String>,
+        chunk_size: u64,
+    ) -> Self {
+        Self {
+            base: FileLoadInfo::new(size, path, file, sha1),
+            chunk_size,
+        }
+    }
+}
+
+pub struct FileDownloadInfo {
+    pub base: FileLoadInfo,
+}
+
+impl FileDownloadInfo {
+    pub fn new(size: u64, path: String, file: tokio::fs::File, sha1: Option<String>) -> Self {
+        Self {
+            base: FileLoadInfo::new(size, path, file, sha1),
         }
     }
 }

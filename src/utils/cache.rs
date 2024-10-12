@@ -74,5 +74,5 @@ async fn test_async_cache() {
     let begin = Instant::now();
     let value = cache.get().await;
     assert_eq!(value, "Hello, world!");
-    assert_eq!(begin.elapsed() >= Duration::from_secs(1), true); // cache miss
+    assert!(begin.elapsed() >= Duration::from_secs(1)); // cache miss
 }

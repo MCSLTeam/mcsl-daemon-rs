@@ -59,7 +59,8 @@ impl WsBehavior {
         // TODO 实现action
 
         info!("received text: {}", msg);
-        self.send(Message::Text(msg)).await?;
+        let text = self.app_resources.actions.handle(&msg).await;
+        self.send(Message::Text(text)).await?;
         Ok(())
     }
 
@@ -68,15 +69,17 @@ impl WsBehavior {
     }
 
     async fn handle_ping(&mut self, msg: Vec<u8>) -> anyhow::Result<()> {
-        todo!()
+        // auto pong
+        self.send(Message::Pong(msg)).await?;
+        Ok(())
     }
 
-    async fn handle_pong(&mut self, msg: Vec<u8>) -> anyhow::Result<()> {
-        todo!()
-    }
-
-    async fn handle_close(&mut self, msg: Option<CloseFrame<'_>>) -> anyhow::Result<()> {
-        info!("websocket close from client: {}", self.addr);
+    async fn handle_closing(&mut self, msg: Option<CloseFrame<'_>>) -> anyhow::Result<()> {
+        info!(
+            "[WsBehavior] websocket close from client({}), with reason: {}",
+            self.addr,
+            msg.map(|f| f.reason).unwrap_or_default()
+        );
         Ok(())
     }
 
@@ -127,9 +130,9 @@ impl WsBehavior {
                                 Message::Text(text) => ws_behavior.handle_text(text).await,
                                 Message::Binary(bin) => ws_behavior.handle_binary(bin).await,
                                 Message::Ping(ping) => ws_behavior.handle_ping(ping).await,
-                                Message::Pong(pong) => ws_behavior.handle_pong(pong).await,
-                                Message::Close(close) => ws_behavior.handle_close(close).await,
-                                Message::Frame(frame) => ws_behavior.handle_frame(frame).await
+                                Message::Close(close) => ws_behavior.handle_closing(close).await,
+                                Message::Frame(frame) => ws_behavior.handle_frame(frame).await,
+                                _ => Ok(())
                             }?
                         }
                         else {break;}

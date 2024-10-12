@@ -1,12 +1,13 @@
 use regex::Regex;
+use serde::Serialize;
 use std::collections::HashMap;
+use std::env;
 use std::ffi::OsStr;
 use std::iter::Iterator;
 use std::path::{absolute, Path};
 use std::process::Output;
 use std::string::ToString;
 use std::sync::{Arc, LazyLock};
-use std::env;
 use tokio::sync::Mutex;
 
 use anyhow::anyhow;
@@ -221,7 +222,7 @@ where
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 pub struct JavaInfo {
     pub version: String,
     pub path: String,
