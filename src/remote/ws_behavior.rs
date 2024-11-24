@@ -1,13 +1,13 @@
 use std::net::SocketAddr;
 
 use anyhow::anyhow;
-use futures::channel::mpsc::{unbounded, UnboundedSender};
 use futures::{SinkExt, StreamExt, TryFutureExt};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
-use log::info;
+use log::{debug, info};
 use serde_json::{json, Value};
 use tokio::select;
+use tokio::sync::mpsc::{error::SendError, unbounded_channel, UnboundedSender};
 use tokio::task::JoinError;
 use tokio_tungstenite::tungstenite::{
     protocol::{frame::coding::CloseCode, frame::Frame, CloseFrame},
@@ -55,26 +55,37 @@ impl WsBehavior {
     }
 }
 impl WsBehavior {
-    async fn handle_text(&mut self, msg: String) -> anyhow::Result<()> {
+    fn handle_text(&self, msg: String) -> anyhow::Result<()> {
         // TODO 实现action
 
         info!("received text: {}", msg);
-        let text = self.app_resources.actions.handle(&msg).await;
-        self.send(Message::Text(text)).await?;
+
+        let actions = self.app_resources.actions.clone();
+        let sender = self.sender.downgrade();
+        tokio::spawn(async move {
+            let text = actions.handle(msg.as_ref()).await;
+            if let Some(sender) = sender.upgrade() {
+                if let Err(msg) = sender.send(Message::Text(text)) {
+                    debug!("could not send message due to ws sender dropped: {}", msg);
+                }
+            } else {
+                debug!("could not send message due to ws sender dropped: {}", text);
+            }
+        });
         Ok(())
     }
 
-    async fn handle_binary(&mut self, msg: Vec<u8>) -> anyhow::Result<()> {
+    fn handle_binary(&self, msg: Vec<u8>) -> anyhow::Result<()> {
         todo!()
     }
 
-    async fn handle_ping(&mut self, msg: Vec<u8>) -> anyhow::Result<()> {
+    fn handle_ping(&self, msg: Vec<u8>) -> anyhow::Result<()> {
         // auto pong
-        self.send(Message::Pong(msg)).await?;
+        self.send(Message::Pong(msg))?;
         Ok(())
     }
 
-    async fn handle_closing(&mut self, msg: Option<CloseFrame<'_>>) -> anyhow::Result<()> {
+    fn handle_closing(&self, msg: Option<CloseFrame<'_>>) -> anyhow::Result<()> {
         info!(
             "[WsBehavior] websocket close from client({}), with reason: {}",
             self.addr,
@@ -83,26 +94,27 @@ impl WsBehavior {
         Ok(())
     }
 
-    async fn handle_frame(&mut self, frame: Frame) -> anyhow::Result<()> {
+    fn handle_frame(&self, frame: Frame) -> anyhow::Result<()> {
         todo!()
     }
 
-    async fn send(&mut self, msg: Message) -> anyhow::Result<()> {
+    fn send(&self, msg: Message) -> Result<(), SendError<Message>> {
         // let mut guard = self.sender.lock().await;
         // guard.send(msg).await?;
-        self.sender.send(msg).await?;
-        Ok(())
+        self.sender.clone().send(msg)
     }
 
-    async fn stop(&mut self) -> anyhow::Result<()> {
+    fn stop(&self) -> anyhow::Result<()> {
         let close_frame = CloseFrame {
             code: CloseCode::Normal,
             reason: "".into(),
         };
-        self.send(Message::Close(Some(close_frame))).await?;
+        self.send(Message::Close(Some(close_frame)))?;
         Ok(())
     }
 }
+
+impl WsBehavior {}
 
 impl WsBehavior {
     pub async fn start(
@@ -112,26 +124,25 @@ impl WsBehavior {
     ) -> anyhow::Result<()> {
         let (mut outgoing, mut incoming) = ws.split();
 
-        let (outgoing_tx, mut outgoing_rx) = unbounded();
+        let (outgoing_tx, mut outgoing_rx) = unbounded_channel();
 
-        let (event_tx, mut event_rx) = unbounded();
+        let (event_tx, mut event_rx) = unbounded_channel();
 
-        let mut ws_behavior =
-            WsBehavior::new(app_resources.clone(), event_tx, outgoing_tx, peer_addr);
+        let ws_behavior = WsBehavior::new(app_resources.clone(), event_tx, outgoing_tx, peer_addr);
 
         let mut cancel_token = app_resources.cancel_token.clone();
 
-        let incoming_loop = async move {
+        let incoming_loop_func = async move {
             loop {
                 select! {
                     msg = incoming.next() => {
                         if let Some(Ok(m)) = msg{
                             match m {
-                                Message::Text(text) => ws_behavior.handle_text(text).await,
-                                Message::Binary(bin) => ws_behavior.handle_binary(bin).await,
-                                Message::Ping(ping) => ws_behavior.handle_ping(ping).await,
-                                Message::Close(close) => ws_behavior.handle_closing(close).await,
-                                Message::Frame(frame) => ws_behavior.handle_frame(frame).await,
+                                Message::Text(text) => ws_behavior.handle_text(text),
+                                Message::Binary(bin) => ws_behavior.handle_binary(bin),
+                                Message::Ping(ping) => ws_behavior.handle_ping(ping),
+                                Message::Close(close) => ws_behavior.handle_closing(close),
+                                Message::Frame(frame) => ws_behavior.handle_frame(frame),
                                 _ => Ok(())
                             }?
                         }
@@ -139,7 +150,7 @@ impl WsBehavior {
                     }
 
                     _ = cancel_token.changed() => {
-                        ws_behavior.stop().await?;
+                        ws_behavior.stop()?;
                         info!("websocket connection from {} closed", peer_addr);
                         break;
                     }
@@ -151,37 +162,32 @@ impl WsBehavior {
         let outgoing_loop = async move {
             loop {
                 select! {
-                    m = outgoing_rx.next() => {
-                        if let Some(m) = m{
-                            match m {
-                                Message::Close(_)=>{
-                                    outgoing.send(m).await?;
-                                    outgoing.close().await?;
-                                },
-                                _ => outgoing.send(m).await?
-                            }
+                    Some(m) = outgoing_rx.recv() => {
+                        match m {
+                            Message::Close(_)=>{
+                                outgoing.send(m).await?;
+                                outgoing.close().await?;
+                            },
+                            _ => outgoing.send(m).await?
                         }
-                        else {break;}
                     }
-                    e = event_rx.next() => {
-                        if let Some((event, data)) = e{
-                            let text = json!({
-                                "event": event.to_string(),
-                                "data": data
-                            }).to_string();
+                    Some((event, data)) = event_rx.recv() => {
+                        let text = json!({
+                            "event": event.to_string(),
+                            "data": data
+                        }).to_string();
 
-                            outgoing.send(Message::text(text)).await?;
-                        }
-                        else {break;}
+                        outgoing.send(Message::text(text)).await?;
                     }
+                    else => break,
                 }
             }
             Ok(())
         };
 
-        let incoming_task = tokio::spawn(incoming_loop)
+        let incoming_loop = tokio::spawn(incoming_loop_func)
             .map_err(|e: JoinError| anyhow!("incoming task error: {}", e));
 
-        tokio::try_join!(incoming_task, outgoing_loop).map(|_| ())
+        tokio::try_join!(incoming_loop, outgoing_loop).map(|_| ())
     }
 }

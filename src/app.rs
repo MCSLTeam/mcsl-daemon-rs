@@ -36,7 +36,7 @@ type Body = http_body_util::Full<Bytes>;
 pub struct Resources {
     pub app_config: AppConfig,
     pub users: Users,
-    pub actions: Actions,
+    pub actions: Arc<Actions>,
     pub files: Arc<Files>,
     pub cancel_token: Receiver<bool>,
     ws_handlers: Mutex<Vec<JoinHandle<()>>>,
@@ -231,7 +231,7 @@ async fn init_app_res() -> anyhow::Result<(Resources, Sender<bool>)> {
         app_config: config,
         users,
         files,
-        actions,
+        actions: Arc::new(actions),
         ws_handlers: Mutex::new(vec![]),
         cancel_token: rx,
     };
