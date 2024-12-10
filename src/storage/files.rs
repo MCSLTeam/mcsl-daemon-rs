@@ -259,9 +259,9 @@ impl Files {
                 file_sessions += 1;
             }
         });
-        if file_sessions > self.app_config.file_download_sessions {
-            bail!("max download sessions of file '{}' reached", path);
-        }
+        // if file_sessions > self.app_config.drivers.file_download_sessions {
+        //     bail!("max download sessions of file '{}' reached", path);
+        // }
 
         let sha1 = Self::get_sha1(path).await?;
         let file = File::options().read(true).open(path).await?;

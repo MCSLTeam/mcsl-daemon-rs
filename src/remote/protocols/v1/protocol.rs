@@ -1,112 +1,26 @@
-use crate::storage::Files;
+use super::super::Protocol;
+use super::action::{
+    ActionRequests, ActionResponses, Request, Response, ResponseStatus, RANGE_REGEX,
+};
+use crate::storage::{java::JavaInfo, Files};
 use crate::utils::AsyncTimedCache;
 use anyhow::{anyhow, bail, Context};
-use regex::Regex;
-use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
-use crate::storage::java::JavaInfo;
-
-static RANGE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+)..(\d+)$").unwrap());
-
-#[derive(Debug, Deserialize, PartialEq, Eq)]
-#[serde(tag = "action", content = "params", rename_all = "snake_case")]
-enum ActionRequests {
-    Ping {},
-    GetJavaList {},
-    FileUploadRequest {
-        path: Option<String>,
-        sha1: Option<String>,
-        chunk_size: u64,
-        size: u64,
-    },
-    FileUploadChunk {
-        file_id: Uuid,
-        offset: u64,
-        data: String,
-    },
-    FileUploadCancel {
-        file_id: Uuid,
-    },
-    FileDownloadRequest {
-        path: String,
-    },
-    FileDownloadRange {
-        file_id: Uuid,
-        range: String,
-    },
-    FileDownloadClose {
-        file_id: Uuid,
-    },
-}
-
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(untagged)]
-enum ActionResponses {
-    ActionError {
-        error_message: String,
-    },
-    Ping {
-        time: u64,
-    },
-    GetJavaList {
-        java_list: Vec<JavaInfo>,
-    },
-    FileUploadRequest {
-        file_id: Uuid,
-    },
-    FileUploadChunk {
-        done: bool,
-        received: u64,
-    },
-    FileUploadCancel {},
-    FileDownloadRequest {
-        file_id: Uuid,
-        size: u64,
-        sha1: String,
-    },
-    FileDownloadRange {
-        content: String,
-    },
-    FileDownloadClose {},
-}
-
-#[derive(Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum ResponseStatus {
-    Ok,
-    Error,
-}
-
-#[derive(Debug, Deserialize, PartialEq, Eq)]
-struct Request {
-    #[serde(flatten)]
-    request: ActionRequests, // flattened
-    echo: Option<String>,
-}
-
-#[derive(Debug, Serialize, PartialEq, Eq)]
-struct Response {
-    status: ResponseStatus,
-    data: ActionResponses,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    echo: Option<String>,
-}
-
-/// action json rpc
-pub struct Actions {
+pub struct ProtocolV1 {
     java_scan_cache: AsyncTimedCache<Vec<JavaInfo>>,
     files: Arc<Files>,
 }
 
-impl Actions {
-    pub async fn handle(&self, raw: &str) -> String {
-        serde_json::to_string_pretty(&self.process(raw).await).unwrap()
+impl Protocol for ProtocolV1 {
+    async fn process_text(&self, raw: &str) -> Option<String> {
+        Some(serde_json::to_string_pretty(&self.process(raw).await).unwrap())
     }
+}
 
+impl ProtocolV1 {
     #[inline]
     async fn process(&self, raw: &str) -> Response {
         let parsed = match serde_json::from_str::<Request>(raw) {
@@ -146,6 +60,7 @@ impl Actions {
             ActionRequests::FileDownloadClose { file_id } => {
                 self.file_download_close_handler(file_id).await
             }
+
             _ => Err(anyhow!("unimplemented".to_string())),
         };
 
@@ -183,7 +98,7 @@ impl Actions {
     }
 }
 
-impl Actions {
+impl ProtocolV1 {
     #[inline]
     async fn ping_handler() -> anyhow::Result<ActionResponses> {
         Ok(ActionResponses::Ping {
@@ -278,7 +193,7 @@ impl Actions {
     }
 }
 
-impl Actions {
+impl ProtocolV1 {
     pub fn new(files: Arc<Files>) -> Self {
         Self {
             java_scan_cache: AsyncTimedCache::new(Duration::from_secs(60)),

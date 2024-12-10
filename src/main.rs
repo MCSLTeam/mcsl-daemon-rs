@@ -2,6 +2,7 @@ use crate::app::run_app;
 use log::info;
 
 mod app;
+mod minecraft;
 mod remote;
 mod storage;
 mod user;

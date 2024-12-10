@@ -15,8 +15,9 @@ use tokio_tungstenite::tungstenite::{
 };
 use tokio_tungstenite::WebSocketStream;
 
+use super::event::Events;
 use crate::app::AppResources;
-use crate::remote::event::Events;
+use crate::remote::protocols::Protocol;
 
 pub struct WsBehavior {
     #[allow(dead_code)]
@@ -60,10 +61,14 @@ impl WsBehavior {
 
         info!("received text: {}", msg);
 
-        let actions = self.app_resources.actions.clone();
+        let actions = self.app_resources.protocol_v1.clone();
         let sender = self.sender.downgrade();
         tokio::spawn(async move {
-            let text = actions.handle(msg.as_ref()).await;
+            let text = actions.process_text(msg.as_ref()).await;
+            if text.is_none() {
+                return;
+            }
+            let text = text.unwrap();
             if let Some(sender) = sender.upgrade() {
                 if let Err(msg) = sender.send(Message::Text(text)) {
                     debug!("could not send message due to ws sender dropped: {}", msg);
@@ -130,7 +135,7 @@ impl WsBehavior {
 
         let ws_behavior = WsBehavior::new(app_resources.clone(), event_tx, outgoing_tx, peer_addr);
 
-        let mut cancel_token = app_resources.cancel_token.clone();
+        let cancel_token = app_resources.cancel_token.clone();
 
         let incoming_loop_func = async move {
             loop {
@@ -149,7 +154,7 @@ impl WsBehavior {
                         else {break;}
                     }
 
-                    _ = cancel_token.changed() => {
+                    _ = cancel_token.notified() => {
                         ws_behavior.stop()?;
                         info!("websocket connection from {} closed", peer_addr);
                         break;
