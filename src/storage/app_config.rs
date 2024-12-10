@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::remote::drivers::DriversConfig;
+use crate::remote::{drivers::DriversConfig, protocols::ProtocolConfig};
 
 use super::file::{Config, FileIoWithBackup};
 
@@ -9,6 +9,7 @@ use super::file::{Config, FileIoWithBackup};
 #[derive(Default)]
 pub struct AppConfig {
     pub drivers: DriversConfig,
+    pub protocols: ProtocolConfig,
 }
 
 impl FileIoWithBackup for AppConfig {}

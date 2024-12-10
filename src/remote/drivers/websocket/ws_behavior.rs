@@ -7,17 +7,18 @@ use hyper_util::rt::TokioIo;
 use log::{debug, info};
 use serde_json::{json, Value};
 use tokio::select;
+use tokio::sync::mpsc::WeakUnboundedSender;
 use tokio::sync::mpsc::{error::SendError, unbounded_channel, UnboundedSender};
 use tokio::task::JoinError;
 use tokio_tungstenite::tungstenite::{
-    protocol::{frame::coding::CloseCode, frame::Frame, CloseFrame},
+    protocol::{frame::coding::CloseCode, CloseFrame},
     Message,
 };
 use tokio_tungstenite::WebSocketStream;
 
-use super::event::Events;
 use crate::app::AppResources;
-use crate::remote::protocols::Protocol;
+use crate::remote::protocols::v1::event::Events;
+use crate::remote::protocols::{Protocol, Protocols};
 
 pub struct WsBehavior {
     #[allow(dead_code)]
@@ -61,27 +62,43 @@ impl WsBehavior {
 
         info!("received text: {}", msg);
 
-        let actions = self.app_resources.protocol_v1.clone();
+        let v1 = self.app_resources.protocol_v1.clone();
         let sender = self.sender.downgrade();
+        let protocols = self.app_resources.protocols;
+
         tokio::spawn(async move {
-            let text = actions.process_text(msg.as_ref()).await;
-            if text.is_none() {
-                return;
-            }
-            let text = text.unwrap();
-            if let Some(sender) = sender.upgrade() {
-                if let Err(msg) = sender.send(Message::Text(text)) {
-                    debug!("could not send message due to ws sender dropped: {}", msg);
+            if protocols.is_enabled(Protocols::V1) {
+                if let Some(text) = v1.process_text(msg.as_ref()).await {
+                    Self::weak_send(sender, Message::Text(text));
                 }
-            } else {
-                debug!("could not send message due to ws sender dropped: {}", text);
             }
         });
         Ok(())
     }
 
+    fn weak_send(weak_sender: WeakUnboundedSender<Message>, data: Message) {
+        if let Some(sender) = weak_sender.upgrade() {
+            if let Err(msg) = sender.send(data) {
+                debug!("could not send message due to ws sender dropped: {}", msg);
+            }
+        } else {
+            debug!("could not send message due to ws sender dropped: {}", data);
+        }
+    }
+
     fn handle_binary(&self, msg: Vec<u8>) -> anyhow::Result<()> {
-        todo!()
+        let v1 = self.app_resources.protocol_v1.clone();
+        let sender = self.sender.downgrade();
+        let protocols = self.app_resources.protocols;
+
+        tokio::spawn(async move {
+            if protocols.is_enabled(Protocols::V1) {
+                if let Some(bin) = v1.process_binary(msg.as_ref()).await {
+                    Self::weak_send(sender, Message::Binary(bin));
+                }
+            }
+        });
+        Ok(())
     }
 
     fn handle_ping(&self, msg: Vec<u8>) -> anyhow::Result<()> {
@@ -92,15 +109,11 @@ impl WsBehavior {
 
     fn handle_closing(&self, msg: Option<CloseFrame<'_>>) -> anyhow::Result<()> {
         info!(
-            "[WsBehavior] websocket close from client({}), with reason: {}",
+            "websocket close from client({}), with reason: {}",
             self.addr,
             msg.map(|f| f.reason).unwrap_or_default()
         );
         Ok(())
-    }
-
-    fn handle_frame(&self, frame: Frame) -> anyhow::Result<()> {
-        todo!()
     }
 
     fn send(&self, msg: Message) -> Result<(), SendError<Message>> {
@@ -147,7 +160,6 @@ impl WsBehavior {
                                 Message::Binary(bin) => ws_behavior.handle_binary(bin),
                                 Message::Ping(ping) => ws_behavior.handle_ping(ping),
                                 Message::Close(close) => ws_behavior.handle_closing(close),
-                                Message::Frame(frame) => ws_behavior.handle_frame(frame),
                                 _ => Ok(())
                             }?
                         }

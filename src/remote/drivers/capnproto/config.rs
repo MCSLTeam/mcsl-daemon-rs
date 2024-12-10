@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::UniDriverConfig;
+use super::super::UniDriverConfig;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CapnprotoDriverConfig {
@@ -17,5 +17,3 @@ impl Default for CapnprotoDriverConfig {
         }
     }
 }
-
-pub struct CapnprotoDriver {}

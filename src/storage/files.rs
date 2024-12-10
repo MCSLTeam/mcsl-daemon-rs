@@ -1,3 +1,4 @@
+use crate::remote::protocols::ProtocolConfig;
 use std::io::Read;
 
 use crate::storage::file::{FileDownloadInfo, FileUploadInfo};
@@ -10,13 +11,11 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use scc::HashMap;
 use uuid::Uuid;
 
-use super::AppConfig;
-
 const ROOT: &str = "daemon";
 const DOWNLOAD_ROOT: &str = "daemon/downloads";
 
 pub struct Files {
-    app_config: AppConfig,
+    protocol_config: ProtocolConfig,
     // use ahash to speed up ops
     upload_sessions: HashMap<Uuid, FileUploadInfo, ahash::RandomState>,
     // use ahash to speed up ops
@@ -25,9 +24,9 @@ pub struct Files {
 
 // files utils
 impl Files {
-    pub fn new(app_config: AppConfig) -> Self {
+    pub fn new(protocol_config: ProtocolConfig) -> Self {
         Self {
-            app_config,
+            protocol_config,
             upload_sessions: HashMap::default(),
             download_sessions: HashMap::default(),
         }
@@ -259,9 +258,9 @@ impl Files {
                 file_sessions += 1;
             }
         });
-        // if file_sessions > self.app_config.drivers.file_download_sessions {
-        //     bail!("max download sessions of file '{}' reached", path);
-        // }
+        if file_sessions > self.protocol_config.v1.file_download_sessions {
+            bail!("max download sessions of file '{}' reached", path);
+        }
 
         let sha1 = Self::get_sha1(path).await?;
         let file = File::options().read(true).open(path).await?;

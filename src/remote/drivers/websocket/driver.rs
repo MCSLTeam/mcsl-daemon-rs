@@ -1,7 +1,8 @@
 use crate::app::AppResources;
+use crate::remote::drivers::Drivers;
 use hyper::service::service_fn;
-use log::{error, info, trace};
-use serde::{Deserialize, Serialize};
+use log::{debug, error, info, trace};
+use serde::Deserialize;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -13,8 +14,8 @@ use hyper::header::{HeaderName, CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_
 use hyper::http::HeaderValue;
 use hyper::upgrade::Upgraded;
 
-use super::{driver::StopToken, Driver, UniDriverConfig};
-use crate::remote::protocols::v1::ws_behavior::WsBehavior;
+use super::super::{driver::StopToken, Driver};
+use super::ws_behavior::WsBehavior;
 use crate::user::UsersManager;
 use anyhow::anyhow;
 use hyper::body::{Bytes, Incoming};
@@ -28,46 +29,27 @@ use tokio_tungstenite::WebSocketStream;
 
 type Body = http_body_util::Full<Bytes>;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct WsDriverConfig {
-    #[serde(flatten)]
-    pub uni_config: UniDriverConfig,
-}
-
 pub struct WsDriver {
     resources: AppResources,
-    protocol_set: u8,
     stop_notification: Arc<Notify>,
 }
 
 pub struct WsDriverBuilder {
     resources: Option<AppResources>,
-    protocol_set: Option<u8>,
 }
 
 impl WsDriverBuilder {
     pub fn new() -> Self {
-        Self {
-            resources: None,
-            protocol_set: None,
-        }
+        Self { resources: None }
     }
     pub fn with_resources(mut self, resources: AppResources) -> Self {
         self.resources = Some(resources);
         self
     }
-    pub fn with_protocol_set(mut self, protocol_set: u8) -> Self {
-        self.protocol_set = Some(protocol_set);
-        self
-    }
     pub fn build(self) -> anyhow::Result<WsDriver> {
         let resources = self.resources.ok_or_else(|| anyhow!("resources not set"))?;
-        let protocol_set = self
-            .protocol_set
-            .ok_or_else(|| anyhow!("protocol_set not set"))?;
         Ok(WsDriver {
             resources,
-            protocol_set,
             stop_notification: Arc::new(Notify::new()),
         })
     }
@@ -112,6 +94,7 @@ async fn login_handler(
     let params = parse_params::<LoginParams>(query);
 
     if params.is_err() {
+        debug!("{} login failed: invalid query", remote_addr);
         return Ok(Response::builder()
             .status(StatusCode::BAD_REQUEST)
             .body(Body::from("Invalid query"))
@@ -125,14 +108,25 @@ async fn login_handler(
         .unwrap_or(30);
     match app_resources.users.auth(&params.usr, &params.pwd).await {
         Some(_) => match app_resources.users.gen_token(&params.usr, expired).await {
-            Ok(token) => Ok(Response::new(Body::from(token))),
-            Err(e) => Ok(Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .body(Body::from(e.to_string()))
-                .unwrap()),
+            Ok(token) => {
+                debug!(
+                    "{} login succeeded with username: {}",
+                    remote_addr, params.usr
+                );
+                Ok(Response::new(Body::from(token)))
+            }
+            Err(e) => {
+                debug!("{} login failed: internal server error.", remote_addr);
+                error!("error occurred when user login: {}", e);
+                Ok(Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::from(e.to_string()))
+                    .unwrap())
+            }
         },
         None => {
             let response = "Unauthorized";
+            debug!("{} login failed: unauthorized.", remote_addr);
             Ok(Response::builder()
                 .status(StatusCode::UNAUTHORIZED)
                 .body(Body::from(response))
@@ -147,7 +141,7 @@ async fn handle_ws_connection(
     addr: SocketAddr,
 ) {
     if let Err(e) = WsBehavior::start(ws, app_resources, addr).await {
-        error!("Error handling WebSocket connection: {}", e);
+        error!("Error occurred when handling WebSocket connection: {}", e);
     }
 }
 
@@ -249,6 +243,9 @@ async fn handle_request(
 
 #[async_trait::async_trait]
 impl Driver for WsDriver {
+    /// run() |> handle_request() |> GET  |> ws_handler()    |> auth? |> Y |> handle_ws_connection() |> WsBehavior::start()
+    ///                           |> POST |> login_handler()
+    ///                           |> HEAD
     async fn run(&self) -> () {
         let uni_cfg = &self
             .resources
@@ -331,13 +328,7 @@ impl Driver for WsDriver {
         self.stop_notification.clone()
     }
 
-    fn set_protocol_set(&mut self, set: u8) {
-        todo!()
-    }
-    fn protocol_set(&self) -> u8 {
-        todo!()
-    }
-    fn get_driver_type(&self) -> &'static str {
-        todo!()
+    fn get_driver_type(&self) -> Drivers {
+        Drivers::Websocket
     }
 }

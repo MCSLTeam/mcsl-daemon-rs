@@ -4,19 +4,22 @@ use super::action::{
 };
 use crate::storage::{java::JavaInfo, Files};
 use crate::utils::AsyncTimedCache;
-use anyhow::{anyhow, bail, Context};
-use std::sync::Arc;
+use anyhow::{bail, Context};
 use std::time::Duration;
 use uuid::Uuid;
 
 pub struct ProtocolV1 {
     java_scan_cache: AsyncTimedCache<Vec<JavaInfo>>,
-    files: Arc<Files>,
+    files: Files,
 }
 
 impl Protocol for ProtocolV1 {
     async fn process_text(&self, raw: &str) -> Option<String> {
         Some(serde_json::to_string_pretty(&self.process(raw).await).unwrap())
+    }
+
+    async fn process_binary(&self, _: &[u8]) -> Option<Vec<u8>> {
+        None
     }
 }
 
@@ -60,8 +63,6 @@ impl ProtocolV1 {
             ActionRequests::FileDownloadClose { file_id } => {
                 self.file_download_close_handler(file_id).await
             }
-
-            _ => Err(anyhow!("unimplemented".to_string())),
         };
 
         let response = match response {
@@ -194,7 +195,7 @@ impl ProtocolV1 {
 }
 
 impl ProtocolV1 {
-    pub fn new(files: Arc<Files>) -> Self {
+    pub fn new(files: Files) -> Self {
         Self {
             java_scan_cache: AsyncTimedCache::new(Duration::from_secs(60)),
             files,
