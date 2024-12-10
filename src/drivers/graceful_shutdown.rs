@@ -1,4 +1,4 @@
-use log::{debug, trace};
+use log::debug;
 use tokio::task::JoinSet;
 
 use super::driver::{Driver, StopToken};

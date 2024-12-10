@@ -189,7 +189,7 @@ impl WsBehavior {
                     }
                     Some((event, data)) = event_rx.recv() => {
                         let text = json!({
-                            "event": event.to_string(),
+                            "event": event,
                             "data": data
                         }).to_string();
 

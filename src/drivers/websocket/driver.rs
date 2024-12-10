@@ -1,7 +1,7 @@
 use crate::app::AppResources;
 use crate::drivers::Drivers;
 use hyper::service::service_fn;
-use log::{debug, error, info, trace};
+use log::{debug, error, info};
 use serde::Deserialize;
 use std::convert::Infallible;
 use std::net::SocketAddr;
