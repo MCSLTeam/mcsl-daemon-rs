@@ -1,5 +1,5 @@
 use crate::app::AppResources;
-use crate::remote::drivers::Drivers;
+use crate::drivers::Drivers;
 use hyper::service::service_fn;
 use log::{debug, error, info, trace};
 use serde::Deserialize;
@@ -32,27 +32,6 @@ type Body = http_body_util::Full<Bytes>;
 pub struct WsDriver {
     resources: AppResources,
     stop_notification: Arc<Notify>,
-}
-
-pub struct WsDriverBuilder {
-    resources: Option<AppResources>,
-}
-
-impl WsDriverBuilder {
-    pub fn new() -> Self {
-        Self { resources: None }
-    }
-    pub fn with_resources(mut self, resources: AppResources) -> Self {
-        self.resources = Some(resources);
-        self
-    }
-    pub fn build(self) -> anyhow::Result<WsDriver> {
-        let resources = self.resources.ok_or_else(|| anyhow!("resources not set"))?;
-        Ok(WsDriver {
-            resources,
-            stop_notification: Arc::new(Notify::new()),
-        })
-    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -301,7 +280,7 @@ impl Driver for WsDriver {
                             }
                         }
 
-                        trace!("connection dropped: {}", peer_addr);
+                        debug!("connection dropped: {}", peer_addr);
                     }));
                 },
 
@@ -315,13 +294,13 @@ impl Driver for WsDriver {
         for handler in http_handlers {
             handler.await.unwrap();
         }
-        trace!("all http handlers finished");
+        debug!("all http handlers finished");
 
         let mut ws_handlers = self.resources.ws_handlers.lock().await;
         for handler in ws_handlers.drain(..) {
             handler.await.unwrap();
         }
-        trace!("all ws handlers finished");
+        debug!("all ws handlers finished");
     }
 
     fn stop_token(&self) -> StopToken {
@@ -330,5 +309,14 @@ impl Driver for WsDriver {
 
     fn get_driver_type(&self) -> Drivers {
         Drivers::Websocket
+    }
+}
+
+impl WsDriver {
+    pub fn new(resources: AppResources) -> Self {
+        Self {
+            resources,
+            stop_notification: Arc::new(Notify::new()),
+        }
     }
 }

@@ -1,4 +1,4 @@
-use log::trace;
+use log::{debug, trace};
 use tokio::task::JoinSet;
 
 use super::driver::{Driver, StopToken};
@@ -35,7 +35,7 @@ impl GracefulShutdown {
         }
 
         join_set.spawn(shutdown);
-        trace!("graceful shutdown start watching");
+        debug!("graceful shutdown start watching");
         join_set.join_all().await;
     }
 }

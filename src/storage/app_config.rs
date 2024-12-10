@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::remote::{drivers::DriversConfig, protocols::ProtocolConfig};
+use crate::{drivers::DriversConfig, protocols::ProtocolConfig};
 
 use super::file::{Config, FileIoWithBackup};
 
@@ -19,7 +19,7 @@ impl Config for AppConfig {
 }
 
 impl AppConfig {
-    pub fn new() -> AppConfig {
+    pub fn load() -> AppConfig {
         Self::load_config_or_default("config.json", Self::default).unwrap()
     }
 }

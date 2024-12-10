@@ -1,13 +1,14 @@
 use std::sync::Arc;
 
+use log::{debug, info};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use crate::remote::drivers::{GracefulShutdown, WsDriverBuilder};
-use crate::remote::protocols::v1::ProtocolV1;
-use crate::remote::protocols::Protocols;
+use crate::drivers::GracefulShutdown;
+use crate::protocols::v1::ProtocolV1;
+use crate::protocols::Protocols;
 use crate::storage::{AppConfig, Files};
-use crate::user::Users;
+use crate::user::{Users, UsersManager};
 use tokio::sync::Notify;
 
 pub struct Resources {
@@ -22,14 +23,22 @@ pub struct Resources {
 pub type AppResources = Arc<Resources>;
 
 async fn init_app_res() -> anyhow::Result<AppResources> {
-    let config = AppConfig::new();
-    let users = Users::build("users.db").await?;
-    let files = Files::new(config.protocols.clone());
-    let protocol_v1 = Arc::new(ProtocolV1::new(files));
+    let config = AppConfig::load();
+    debug!(
+        "config loaded: {}",
+        serde_json::to_string_pretty(&config).unwrap()
+    );
 
+    let files = Files::new(config.protocols.clone());
+    let protocol_v1 = Arc::new(ProtocolV1::new(files)); // v1 protocol resources
     let protocols = Protocols::combine(config.protocols.enabled.as_ref());
 
+    let users = Users::build("users.db").await?;
     users.fix_admin().await?;
+    debug!(
+        "users loaded: {:?}",
+        Vec::from_iter(users.get_users().await?.keys())
+    );
 
     let resources = Resources {
         app_config: config,
@@ -46,8 +55,14 @@ pub async fn run_app() -> anyhow::Result<()> {
     let resources = init_app_res().await?;
     let mut gs = GracefulShutdown::new();
 
-    gs.add_driver(WsDriverBuilder::new().with_resources(resources).build()?);
+    resources
+        .app_config
+        .drivers
+        .enabled
+        .iter()
+        .for_each(|driver_type| gs.add_driver(driver_type.new_driver(resources.clone())));
 
     gs.watch().await;
+    info!("Bye.");
     Ok(())
 }

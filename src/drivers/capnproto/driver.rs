@@ -1,4 +1,4 @@
-use crate::remote::drivers::{driver::StopToken, Driver, Drivers};
+use crate::drivers::{driver::StopToken, Driver, Drivers};
 
 pub struct CapnprotoDriver {}
 

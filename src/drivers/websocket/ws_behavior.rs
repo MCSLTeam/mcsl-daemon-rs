@@ -17,8 +17,7 @@ use tokio_tungstenite::tungstenite::{
 use tokio_tungstenite::WebSocketStream;
 
 use crate::app::AppResources;
-use crate::remote::protocols::v1::event::Events;
-use crate::remote::protocols::{Protocol, Protocols};
+use crate::protocols::{v1::event::Events, Protocol, Protocols};
 
 pub struct WsBehavior {
     #[allow(dead_code)]

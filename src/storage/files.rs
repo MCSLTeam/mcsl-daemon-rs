@@ -1,4 +1,4 @@
-use crate::remote::protocols::ProtocolConfig;
+use crate::protocols::ProtocolConfig;
 use std::io::Read;
 
 use crate::storage::file::{FileDownloadInfo, FileUploadInfo};
