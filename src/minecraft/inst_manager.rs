@@ -13,3 +13,5 @@ pub trait InstManager {
     async fn status(&self, inst_id: Uuid) -> anyhow::Result<InstStatus>;
     async fn all_status(&self) -> anyhow::Result<HashMap<Uuid, InstStatus>>;
 }
+
+pub struct InstManagerImpl {}
