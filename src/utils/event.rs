@@ -71,7 +71,7 @@ impl<T:Clone> ListenerWrapper<T> {
 }
 
 /// 消耗一次listener wrapper，返回true表示次数耗尽，需要remove listener
-fn consume_wrapper<T: Clone>(wrapper: &ListenerWrapper<T>) -> bool {
+fn begin_invoke_wrapper<T: Clone>(wrapper: &ListenerWrapper<T>) -> bool {
     // 前置检查：若已被标记为移除，直接返回 false
     if wrapper.is_removed.load(Ordering::Relaxed) {
         return false;
@@ -103,13 +103,13 @@ macro_rules! event_decl {
 
 
         pub struct $event_name {
-            listeners: std::sync::Arc<std::sync::Mutex<Vec<ListenerWrapper<($($arg_type),*)>>>>,
+            listeners: Arc<std::sync::Mutex<Vec<ListenerWrapper<($($arg_type),*)>>>>,
         }
 
         impl $event_name {
             pub fn new() -> Self {
                 Self {
-                    listeners: std::sync::Arc::new(std::sync::Mutex::new(Vec::new()))
+                    listeners: Arc::new(std::sync::Mutex::new(Vec::new()))
                 }
             }
 
@@ -149,7 +149,7 @@ macro_rules! event_decl {
             }
             
             fn _remove_listener(
-                listeners: Arc<Mutex<Vec<ListenerWrapper<($($arg_type),*)>>>>,
+                listeners: Arc<std::sync::Mutex<Vec<ListenerWrapper<($($arg_type),*)>>>>,
                 id: u64
             ) -> bool {
                 let mut guard = listeners.lock().unwrap();
@@ -183,23 +183,27 @@ macro_rules! event_decl {
                         }
                         
                         // 消费回调并判断是否需要移除
-                        if consume_wrapper(&wrapper) {
+                        if begin_invoke_wrapper(&wrapper) {
                             Self::_remove_listener(listeners.clone(), wrapper.id);
-                        } else {
-                            // 正常处理回调逻辑
-                            match &wrapper.callback {
-                                CallbackFn::Sync(cb) => cb(($($arg_name.clone()),*)),
-                                CallbackFn::Async(cb) => {
-                                    let fut = cb(($($arg_name.clone()),*));
-                                    let _ = tokio::spawn(fut).await;
-                                }
+                            continue;
+                        } 
+                        
+                        // 正常处理回调逻辑
+                        match &wrapper.callback {
+                            CallbackFn::Sync(cb) => cb(($($arg_name.clone()),*)),
+                            CallbackFn::Async(cb) => {
+                                let fut = cb(($($arg_name.clone()),*));
+                                let _ = tokio::spawn(fut);
                             }
                         }
+                        
                     }
                 });
             }
             
-            /// 仅在需要Debug时才调用，release下不要出现此函数。因为包含了panic::catch_unwind，以及需要保留一些调试符号来显示unwind信息
+            /// invoke的安全版本，镇压callback中的panic。
+            /// 仅在需要Debug时才调用，release下不要出现此函数。
+            /// 它包含了panic::catch_unwind，以及需要保留一些调试符号来显示unwind信息。
             pub fn invoke_safe(&self, $($arg_name: $arg_type),*) {
                 let listeners_snapshot = {
                     let guard = self.listeners.lock().unwrap();
@@ -218,7 +222,7 @@ macro_rules! event_decl {
                         }
                         
                         // 消耗callback
-                        if consume_wrapper(wrapper) {
+                        if begin_invoke_wrapper(wrapper) {
                             Self::_remove_listener(listeners.clone(), wrapper.id);
                             continue;
                         }
@@ -268,7 +272,7 @@ macro_rules! event_decl {
                     }
                     
                     // 消耗callback
-                    if consume_wrapper(wrapper) {
+                    if begin_invoke_wrapper(wrapper) {
                         Self::_remove_listener(listeners.clone(), wrapper.id);
                         continue;
                     }
@@ -305,9 +309,7 @@ macro_rules! event_decl {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
     use super::*;
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
     
     event_decl!(TestEvent, num: i32, msg: &'static str, data: String);
@@ -328,6 +330,8 @@ mod tests {
         event.invoke(42, "Hello", "World".to_string());
         tokio::task::yield_now().await;
         assert_eq!(counter.load(Ordering::Relaxed), 1);
+        event.invoke_async(42, "Hello", "World".to_string()).await;
+        assert_eq!(counter.load(Ordering::Relaxed), 2);
     }
 
     #[tokio::test]
@@ -372,7 +376,7 @@ mod tests {
                 assert_eq!(num, 42);
                 assert_eq!(msg, "Hello");
                 assert_eq!(data, "World".to_string());
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                 counter_clone.fetch_add(1, Ordering::Relaxed);
                 panic!("Test panic async");
             }
@@ -411,10 +415,11 @@ mod tests {
                 counter_clone.fetch_add(1, Ordering::Relaxed);
             }
         }, TListener::default());
-
-        event.invoke_async(42, "Hello", "World".to_string()).await;
-
+        event.invoke(42, "Hello", "World".to_string());
+        tokio::task::yield_now().await;
         assert_eq!(counter.load(Ordering::Relaxed), 1);
+        event.invoke_async(42, "Hello", "World".to_string()).await;
+        assert_eq!(counter.load(Ordering::Relaxed), 2);
     }
 
     #[tokio::test]
@@ -454,22 +459,25 @@ mod tests {
         let event = TestEvent::new();
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = Arc::clone(&counter);
+        let counter_clone2 = Arc::clone(&counter);
         
         event.add_sync_listener(move |_, _, _| {
             counter_clone.fetch_add(1, Ordering::Relaxed);
         }, TListener::count(50));
         
-        for _ in 0..50{
+        event.add_async_listener(move |_, _ ,_|  {
+            let counter_clone = Arc::clone(&counter_clone2);
+            async move {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                counter_clone.fetch_add(1, Ordering::Relaxed);
+            }
+        }, TListener::count(25));
+        
+        for _ in 0..100{
             event.invoke(10, "Test", "World".to_string());
         }
-        tokio::task::yield_now().await;
-        assert_eq!(counter.load(Ordering::Relaxed), 50);
-
-        for _ in 0..50{
-            event.invoke(10, "Test", "World".to_string());
-        }
-        tokio::task::yield_now().await;
-        assert_eq!(counter.load(Ordering::Relaxed), 50);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(counter.load(Ordering::Relaxed), 50+25);
     }
 
     #[tokio::test]
@@ -477,19 +485,25 @@ mod tests {
         let event = TestEvent::new();
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = Arc::clone(&counter);
+        let counter_clone2 = Arc::clone(&counter);
 
         event.add_sync_listener(move |_, _, _| {
             counter_clone.fetch_add(1, Ordering::Relaxed);
         }, TListener::once());
 
-        
-        event.invoke(10, "Test", "World".to_string());
-        tokio::task::yield_now().await;
-        assert_eq!(counter.load(Ordering::Relaxed), 1);
+        event.add_async_listener(move |_,_, _| {
+            let counter_clone = Arc::clone(&counter_clone2);
+            async move {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                counter_clone.fetch_add(1, Ordering::Relaxed);
+            }
+        }, TListener::once());
 
-        event.invoke(10, "Test", "World".to_string());
-        tokio::task::yield_now().await;
-        assert_eq!(counter.load(Ordering::Relaxed), 1);
+        for _ in 0..50{
+            event.invoke(10, "Test", "World".to_string());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert_eq!(counter.load(Ordering::Relaxed), 1+1);
     }
 }
 
