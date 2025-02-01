@@ -71,7 +71,7 @@ impl<T:Clone> ListenerWrapper<T> {
 }
 
 /// 消耗一次listener wrapper，返回true表示次数耗尽，需要remove listener
-fn begin_invoke_wrapper<T: Clone>(wrapper: &ListenerWrapper<T>) -> bool {
+fn consume_wrapper<T: Clone>(wrapper: &ListenerWrapper<T>) -> bool {
     // 前置检查：若已被标记为移除，直接返回 false
     if wrapper.is_removed.load(Ordering::Relaxed) {
         return false;
@@ -81,10 +81,11 @@ fn begin_invoke_wrapper<T: Clone>(wrapper: &ListenerWrapper<T>) -> bool {
         TListener::Simple => false,
         TListener::Count(counter) => {
             let old = counter.fetch_sub(1, Ordering::SeqCst);
-            old == 0 // 旧值为 0 时触发移除
+            old == 1 // 旧值为 1 时触发移除(执行一次后); event_decl中已经过滤了counter初值为0的情况
         }
         TListener::Once(consumed) => {
-            consumed.fetch_or(true, Ordering::SeqCst) // 第二次尝试调用时移除
+            let was_consumed = consumed.swap(true, Ordering::SeqCst);
+            !was_consumed // 如果是首次消费，返回 true（需要移除）
         }
     };
 
@@ -97,6 +98,7 @@ fn begin_invoke_wrapper<T: Clone>(wrapper: &ListenerWrapper<T>) -> bool {
     }
 }
 
+/// TODO 使用map替代vec以实现 begin_invoke_wrapper的就地删除
 #[macro_export]
 macro_rules! event_decl {
     ($event_name:ident, $($arg_name:ident : $arg_type:ty),*) => {
@@ -113,10 +115,16 @@ macro_rules! event_decl {
                 }
             }
 
-            pub fn add_sync_listener<F>(&self, callback: F, t_callback: TListener) -> u64
+            pub fn add_sync_listener<F>(&self, callback: F, t_callback: TListener) -> Option<u64>
             where
                 F: Fn($($arg_type),*) + Send + Sync + 'static,
             {
+                if let TListener::Count(counter) = &t_callback {
+                    if counter.load(Ordering::Relaxed) == 0 {
+                        return None;
+                    }
+                }
+
                 let mut listeners = self.listeners.lock().unwrap();
                 let id = generate_id();
                 listeners.push(ListenerWrapper::new(
@@ -127,14 +135,20 @@ macro_rules! event_decl {
                         callback($($arg_name),*);
                     }))
                 ));
-                id
+                Some(id)
             }
 
-            pub fn add_async_listener<F, Fut>(&self, callback: F, t_callback: TListener) -> u64
+            pub fn add_async_listener<F, Fut>(&self, callback: F, t_callback: TListener) -> Option<u64>
             where
                 F: Fn($($arg_type),*) -> Fut + Send + Sync + 'static,
                 Fut: Future<Output = ()> + Send + 'static,
             {
+                if let TListener::Count(counter) = &t_callback {
+                    if counter.load(Ordering::Relaxed) == 0 {
+                        return None;
+                    }
+                }
+
                 let mut listeners = self.listeners.lock().unwrap();
                 let id = generate_id();
                 listeners.push(ListenerWrapper::new(
@@ -145,7 +159,7 @@ macro_rules! event_decl {
                         Box::pin(callback($($arg_name),*))
                     }))
                 ));
-                id
+                Some(id)
             }
             
             fn _remove_listener(
@@ -183,24 +197,29 @@ macro_rules! event_decl {
                         }
                         
                         // 消费回调并判断是否需要移除
-                        if begin_invoke_wrapper(&wrapper) {
-                            Self::_remove_listener(listeners.clone(), wrapper.id);
-                            continue;
-                        } 
-                        
+                        // if begin_invoke_wrapper(&wrapper) {
+                        //     Self::_remove_listener(listeners.clone(), wrapper.id);
+                        //     continue;
+                        // }
+                        let should_remove = consume_wrapper(&wrapper);
+
                         // 正常处理回调逻辑
                         match &wrapper.callback {
                             CallbackFn::Sync(cb) => cb(($($arg_name.clone()),*)),
                             CallbackFn::Async(cb) => {
                                 let fut = cb(($($arg_name.clone()),*));
-                                let _ = tokio::spawn(fut);
+                                tokio::spawn(fut);
                             }
                         }
-                        
+
+                        if should_remove {
+                            Self::_remove_listener(listeners.clone(), wrapper.id);
+                        }
+
                     }
                 });
             }
-            
+
             /// invoke的安全版本，镇压callback中的panic。
             /// 仅在需要Debug时才调用，release下不要出现此函数。
             /// 它包含了panic::catch_unwind，以及需要保留一些调试符号来显示unwind信息。
@@ -222,10 +241,7 @@ macro_rules! event_decl {
                         }
                         
                         // 消耗callback
-                        if begin_invoke_wrapper(wrapper) {
-                            Self::_remove_listener(listeners.clone(), wrapper.id);
-                            continue;
-                        }
+                        let should_remove = consume_wrapper(&wrapper);
                         
                         // 执行callback
                         match &wrapper.callback {
@@ -242,7 +258,10 @@ macro_rules! event_decl {
                                 join_set.spawn(fut);
                             }
                         }
-        
+
+                        if should_remove {
+                            Self::_remove_listener(listeners.clone(), wrapper.id);
+                        }
                     }
         
                     while let Some(res) = join_set.join_next().await{
@@ -272,10 +291,7 @@ macro_rules! event_decl {
                     }
                     
                     // 消耗callback
-                    if begin_invoke_wrapper(wrapper) {
-                        Self::_remove_listener(listeners.clone(), wrapper.id);
-                        continue;
-                    }
+                    let should_remove = consume_wrapper(&wrapper);
                     
                     // 执行Callback
                     match &wrapper.callback {
@@ -286,6 +302,10 @@ macro_rules! event_decl {
                             let fut = cb(($($arg_name.clone()),*)); // TODO 非Copy类型的clone处理, 去除非必要的clone() <==(建议)
                             set.spawn(fut);
                         }
+                    }
+
+                    if should_remove {
+                        Self::_remove_listener(listeners.clone(), wrapper.id);
                     }
                 }
                 set.join_all().await;
@@ -311,7 +331,8 @@ macro_rules! event_decl {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    
+
+    // TODO限制invoke时async cb的并发度
     event_decl!(TestEvent, num: i32, msg: &'static str, data: String);
 
     #[tokio::test]
@@ -430,7 +451,7 @@ mod tests {
 
         let listener_id = event.add_sync_listener(move |_, _, _| {
             counter_clone.fetch_add(1, Ordering::Relaxed);
-        }, TListener::default());
+        }, TListener::default()).unwrap();
 
         assert!(event.remove_listener(listener_id));
         event.invoke(10, "Test", "World".to_string());
@@ -464,7 +485,7 @@ mod tests {
         event.add_sync_listener(move |_, _, _| {
             counter_clone.fetch_add(1, Ordering::Relaxed);
         }, TListener::count(50));
-        
+
         event.add_async_listener(move |_, _ ,_|  {
             let counter_clone = Arc::clone(&counter_clone2);
             async move {
