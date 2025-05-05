@@ -59,9 +59,10 @@ ahash = "0.8.11"
 [features]
 sqlite_bundled = ["rusqlite/bundled"]
 
-[profile.release]
+[profile.fat-release]
 strip = true
 opt-level = 3
 lto = "fat"
-codegen-units = 1 # default is 16
-panic = "abort"   # dangerous
+codegen-units = 1
+panic = "abort"
+inherits = "release"

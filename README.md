@@ -5,3 +5,17 @@
 
 ### Q&A
 1. Q：pull后启动报错? A: 尝试删除config.json
+
+## 构建说明
+
+使用
+```powershell
+cargo build --release
+```
+来构建 release 配置
+
+或者通过
+```powershell
+cargo build --profile fat-release
+```
+来构建矿泉水写的 release 配置
