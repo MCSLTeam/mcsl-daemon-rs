@@ -1,3 +1,0 @@
-[submodule "inst_comm"]
-	path = inst_comm
-	url = https://github.com/AresConnor/mcsl_inst_comm_rs.git

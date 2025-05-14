@@ -1,68 +1,8 @@
-[package]
-name = "mcsl-daemon-rs"
-version = "0.1.0"
-edition = "2021"
-
 [workspace]
-members = ["inst_comm"]
+members = [
+    "daemon",
+    "protocol"
+]
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-## 序列化/反序列化
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-## 数据处理和标识
-uuid = { version = "1.10.0", features = ["v4", "serde"] }
-sha1 = "0.10.6"
-encoding = "0.2.33"
-chrono = "0.4.38"
-
-## 日志记录
-log = "0.4"
-pretty_env_logger = "0.5.0"
-
-## 加密和安全
-ring = "0.17.8"
-jsonwebtoken = "9.3.0"
-
-## 异步编程
-tokio = { version = "1", features = [
-    "rt",
-    "rt-multi-thread",
-    "macros",
-    "signal",
-    "process",
-    "fs",
-] }
-async-trait = "0.1.83"
-futures = "0.3.30"
-
-## 网络和 HTTP
-hyper = { version = "1.4.1", features = ["server", "http1"] }
-hyper-util = { version = "0.1.6", features = ["tokio", "http1", "server-auto"] }
-http-body-util = "0.1.2"
-tokio-tungstenite = "0.23.1"
-
-## 数据库
-rusqlite = "0.32.1"
-
-## 错误处理
-anyhow = "1.0"
-
-## 工具和通用库
-regex = "1.11.0"
-scc = "2.2.0"
-ahash = "0.8.11"
-
-[features]
-sqlite_bundled = ["rusqlite/bundled"]
-
-[profile.fat-release]
-strip = true
-opt-level = 3
-lto = "fat"
-codegen-units = 1
-panic = "abort"
-inherits = "release"
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
