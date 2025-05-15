@@ -18,9 +18,9 @@ pub enum Drivers {
 }
 
 impl Drivers {
-    pub fn new_driver(&self, resources: AppState) -> impl Driver {
+    pub fn new_driver(&self, app_state: AppState) -> impl Driver {
         match self {
-            Drivers::Websocket => WsDriver::new(resources),
+            Drivers::Websocket => WsDriver::new(app_state),
             Drivers::Capnproto => unimplemented!(),
         }
     }

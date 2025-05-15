@@ -37,10 +37,8 @@ async-trait = "0.1.83"
 futures = "0.3.30"
 
 ## 网络和 HTTP
-hyper = { version = "1.4.1", features = ["server", "http1"] }
-hyper-util = { version = "0.1.6", features = ["tokio", "http1", "server-auto"] }
-http-body-util = "0.1.2"
-tokio-tungstenite = "0.23.1"
+axum = { version = "0.8.4", features = ["ws", "tokio", "multipart"] }
+tower-http = { version = "0.6.4" ,features = ["cors"]}
 
 ## 错误处理
 anyhow = "1.0"

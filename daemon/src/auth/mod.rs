@@ -4,6 +4,5 @@ mod jwt;
 mod permission;
 
 pub use config::AuthConfig;
-
-
-
+pub use jwt::*;
+pub use permission::*;

@@ -1,8 +1,8 @@
-use std::time::{SystemTime, UNIX_EPOCH};
 use crate::config::AppConfig;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const CHARS_LEN: usize = CHARS.len();
@@ -71,7 +71,7 @@ impl JwtCodec for JwtClaims {
 
         decode::<Self>(
             token,
-            &DecodingKey::from_secret(AppConfig::get().auth.jwt_secret.as_bytes()),
+            &DecodingKey::from_secret(AppConfig::get().auth.secret.as_bytes()),
             &validation,
         )
         .map(|data| data.claims)
@@ -81,7 +81,7 @@ impl JwtCodec for JwtClaims {
         encode(
             &Header::default(),
             &self,
-            &EncodingKey::from_secret(AppConfig::get().auth.jwt_secret.as_bytes()),
+            &EncodingKey::from_secret(AppConfig::get().auth.secret.as_bytes()),
         )
         .unwrap()
     }

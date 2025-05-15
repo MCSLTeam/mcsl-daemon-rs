@@ -177,8 +177,7 @@ where
                 .map(|name| {
                     let name_lower = name.to_ascii_lowercase();
                     if cfg!(windows) {
-                        name_lower == JAVA_NAME
-                            && path.extension().map_or(false, |ext| ext == "exe")
+                        name_lower == JAVA_NAME && path.extension().is_some_and(|ext| ext == "exe")
                     } else {
                         name_lower == JAVA_NAME
                     }

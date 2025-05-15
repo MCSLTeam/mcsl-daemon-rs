@@ -1,6 +1,6 @@
-use std::borrow::Cow;
 use super::Drivers;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 use super::websocket::WsDriverConfig;
 

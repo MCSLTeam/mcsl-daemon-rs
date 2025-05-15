@@ -19,7 +19,7 @@ pub enum TargetType {
     Script,
 }
 
-const FILE_NAME: &'static str = "daemon_instance.json";
+const FILE_NAME: &str = "daemon_instance.json";
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct InstConfig {

@@ -1,224 +1,79 @@
-use crate::app::AppState;
-use crate::drivers::Drivers;
-use hyper::service::service_fn;
+use crate::auth::matchable::any;
+use crate::auth::{JwtClaims, JwtCodec};
+use crate::drivers::websocket::WebsocketConnection;
+use crate::drivers::Driver;
+use crate::{app::AppState, config::AppConfig, drivers::Drivers};
+use axum::extract::Query;
+use axum::http::header;
+use axum::{
+    body::Body,
+    extract::{
+        multipart::Multipart,
+        ws::{WebSocket, WebSocketUpgrade},
+        ConnectInfo, State,
+    },
+    http::{HeaderMap, HeaderName, HeaderValue, Method, Response, StatusCode},
+    response::IntoResponse,
+    routing::{get, head, post},
+    Router,
+};
 use log::{debug, error, info};
 use serde::Deserialize;
-use std::convert::Infallible;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::net::TcpListener;
-use tokio::sync::Notify;
-
-use hyper::header::{HeaderName, CONNECTION, SEC_WEBSOCKET_ACCEPT, SEC_WEBSOCKET_KEY, UPGRADE};
-use hyper::http::HeaderValue;
-use hyper::upgrade::Upgraded;
-
-use super::super::{driver::StopToken, Driver};
-use super::connection::WebsocketConnection;
-use anyhow::anyhow;
-use hyper::body::{Bytes, Incoming};
-use hyper::{Method, Request, Response, StatusCode};
-use hyper_util::rt::{TokioExecutor, TokioIo};
-use hyper_util::server::conn::auto::Builder;
-use serde::de::DeserializeOwned;
+use serde_json::json;
 use std::collections::HashMap;
-use tokio_tungstenite::tungstenite::{handshake::derive_accept_key, protocol::Role};
-use tokio_tungstenite::WebSocketStream;
-use crate::config::AppConfig;
-
-type Body = http_body_util::Full<Bytes>;
+use std::net::SocketAddr;
+use thiserror::Error;
+use tokio::net::TcpListener;
+use tower_http::cors::CorsLayer;
 
 pub struct WsDriver {
-    resources: AppState,
-    stop_notification: Arc<Notify>,
+    app_state: AppState,
 }
 
-async fn subtoken_handler(
-    app_state: AppState,
-    req: Request<Incoming>,
-    remote_addr: SocketAddr,
-) -> Result<Response<Body>, Infallible> {
-    // TODO
-    Ok(Response::builder()
-        .status(StatusCode::UNAUTHORIZED)
-        .body(Body::from("Unauthorized"))
-        .unwrap())
-}
-
-async fn handle_ws_connection(
-    app_state: AppState,
-    ws: WebSocketStream<TokioIo<Upgraded>>,
-    addr: SocketAddr,
-) {
-    let app_state_clone = app_state.clone();
-    if let Err(e) = app_state
-        .ws_conn_manager
-        .serve_connection(ws, app_state_clone, addr)
-        .await
-    {
-        error!("Error occurred when handling WebSocket connection: {}", e);
-    }
-}
-
-async fn websocket_upgrade_handler(
-    app_state: AppState,
-    mut req: Request<Incoming>,
-    remote_addr: SocketAddr,
-) -> Result<Response<Body>, Infallible> {
-    let headers = req.headers();
-    let derived = headers
-        .get(SEC_WEBSOCKET_KEY)
-        .map(|k| derive_accept_key(k.as_bytes()));
-    let ver = req.version();
-
-    // verify connection
-    if let Err(err_resp) = WebsocketConnection::verify_connection(app_state.clone(), &req, &remote_addr).await
-    {
-        return Ok(err_resp);
-    }
-
-    let state = app_state.clone();
-    let handler = tokio::spawn(async move {
-        match hyper::upgrade::on(&mut req).await {
-            Ok(upgrade) => {
-                let upgraded = TokioIo::new(upgrade);
-                handle_ws_connection(
-                    state,
-                    WebSocketStream::from_raw_socket(upgraded, Role::Server, None).await,
-                    remote_addr,
-                )
-                .await;
-            }
-            Err(e) => {
-                println!("Error upgrading connection: {}", e);
-            }
-        }
-    });
-    app_state.ws_connections.lock().await.push(handler);
-
-    // send upgrade response
-    let mut res = Response::new(Body::default());
-    *res.status_mut() = StatusCode::SWITCHING_PROTOCOLS;
-    *res.version_mut() = ver;
-    res.headers_mut()
-        .append(CONNECTION, HeaderValue::from_static("Upgrade"));
-    res.headers_mut()
-        .append(UPGRADE, HeaderValue::from_static("websocket"));
-    res.headers_mut()
-        .append(SEC_WEBSOCKET_ACCEPT, derived.unwrap().parse().unwrap());
-    Ok(res)
-}
-
-async fn http_request_handler(
-    app_state: AppState,
-    req: Request<Incoming>,
-    remote_addr: SocketAddr,
-) -> Result<Response<Body>, Infallible> {
-    match (req.method(), req.uri().path()) {
-        (&Method::GET, "/api/v1") => websocket_upgrade_handler(app_state, req, remote_addr).await,
-        (&Method::POST, "/subtoken") => subtoken_handler(app_state, req, remote_addr).await,
-        (&Method::HEAD, _) => {
-            let mut resp = Response::new(Body::default());
-            resp.headers_mut().append(
-                HeaderName::from_static("x-application"),
-                HeaderValue::from_static("mcsl_daemon_rs"),
-            );
-            Ok(resp)
-        }
-        _ => {
-            // Return 404 not found response.
-            Ok(Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(Body::from("Not Found"))
-                .unwrap())
-        }
-    }
+#[derive(Deserialize)]
+struct SubtokenForm {
+    pub token: String,
+    pub permissions: String,
+    pub expires: Option<u64>,
 }
 
 #[async_trait::async_trait]
 impl Driver for WsDriver {
-    /// run() |> handle_request() |> GET  |> ws_handler()    |> auth? |> Y |> handle_ws_connection() |> WsBehavior::start()
-    ///                           |> POST |> login_handler()
-    ///                           |> HEAD
-    async fn run(&self) -> () {
-        let uni_cfg = &AppConfig::get()
-            .drivers
-            .websocket_driver_config
-            .uni_config;
+    async fn run(&self) {
+        let uni_cfg = &AppConfig::get().drivers.websocket_driver_config.uni_config;
         let addr = SocketAddr::new(uni_cfg.host, uni_cfg.port);
 
-        let listener = TcpListener::bind(&addr).await.expect("bind failed");
-        info!("Listening on {}", &addr);
-        let builder = Builder::new(TokioExecutor::new());
+        let app = Router::new()
+            .route("/api/v1", get(ws_handler))
+            .route("/subtoken", post(subtoken_handler))
+            .route("/info", get(info_handler))
+            .with_state(self.app_state.clone())
+            .layer(
+                CorsLayer::new()
+                    .allow_origin(tower_http::cors::Any)
+                    .allow_methods([Method::GET, Method::POST]),
+            )
+            .into_make_service_with_connect_info::<SocketAddr>();
 
-        let mut http_handlers = vec![];
+        let listener = TcpListener::bind(addr).await.expect("Failed to bind");
+        info!("WebSocket server listening on {}", addr);
 
-        let stop_notify = self.stop_notification.clone();
-        let cancel_token = self.resources.cancel_token.clone();
+        let stop_token = self.app_state.stop_notify.clone();
+        let state = self.app_state.clone();
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                stop_token.notified().await;
+                info!("Shutdown signal received, closing connections...");
 
-        loop {
-            tokio::select! {
-                conn = listener.accept() => {
-
-                    let (stream, peer_addr) = match conn {
-                        Ok(conn) => conn,
-                        Err(e) => {
-                            info!("accept error: {}", e);
-                            tokio::time::sleep(Duration::from_secs(1)).await;
-                            continue;
-                        }
-                    };
-                    info!("incoming connection accepted: {}", peer_addr);
-                    let io = TokioIo::new(stream);
-                    let app_res = self.resources.clone();
-
-                    let cancel_token4http = self.resources.cancel_token.clone();
-
-                    let conn = builder.serve_connection_with_upgrades(
-                        io,
-                        service_fn(move |req| http_request_handler(app_res.to_owned(), req, peer_addr))
-                    ).into_owned();
-
-                    http_handlers.push(tokio::spawn(async move {
-                        tokio::select! {
-                            res = conn => {
-                                if let Err(err) = res {
-                                    error!("connection error: {}", err);
-                                }
-                            },
-
-                            _ = cancel_token4http.notified() => {
-                                info!("http shutting down");
-                                return;
-                            }
-                        }
-
-                        debug!("connection dropped: {}", peer_addr);
-                    }));
-                },
-
-                _ = stop_notify.notified() => {
-                    cancel_token.notify_one();
-                    info!("Stop signal received, stop listening and starting shutdown...");
-                        break;
+                let mut ws_handlers = state.ws_connections.lock().await;
+                for handler in ws_handlers.drain(..) {
+                    if let Err(err) = handler.await {
+                        error!("Error handling websocket connection: {}", err);
+                    }
                 }
-            }
-        }
-        for handler in http_handlers {
-            handler.await.unwrap();
-        }
-        debug!("all http connection closed");
-
-        let mut ws_handlers = self.resources.ws_connections.lock().await;
-        for handler in ws_handlers.drain(..) {
-            handler.await.unwrap();
-        }
-        debug!("all ws connection closed");
-    }
-
-    fn stop_token(&self) -> StopToken {
-        self.stop_notification.clone()
+            })
+            .await
+            .unwrap();
     }
 
     fn get_driver_type(&self) -> Drivers {
@@ -226,11 +81,166 @@ impl Driver for WsDriver {
     }
 }
 
-impl WsDriver {
-    pub fn new(resources: AppState) -> Self {
-        Self {
-            resources,
-            stop_notification: Arc::new(Notify::new()),
+// WebSocket处理函数
+async fn ws_handler(
+    ws: WebSocketUpgrade,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Query(params): Query<HashMap<String, String>>,
+    State(state): State<AppState>,
+) -> impl IntoResponse {
+    info!("WebSocket connection received from {:?}", addr);
+    // 执行验证逻辑
+    if let Err(reason) =
+        WebsocketConnection::verify_connection(state.clone(), &headers, params, &addr).await
+    {
+        return Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .body(reason.into())
+            .unwrap();
+    }
+
+    ws.on_upgrade(move |socket| handle_ws_connection(socket, state, addr))
+}
+
+// WebSocket连接处理
+async fn handle_ws_connection(socket: WebSocket, state: AppState, addr: SocketAddr) {
+    let state_clone = state.clone();
+
+    // 将连接加入管理
+    let join_handle = tokio::spawn(async move {
+        let state_clone = state.clone();
+        match state
+            .ws_conn_manager
+            .serve_connection(socket, state_clone, addr)
+            .await
+        {
+            Ok(_) => debug!("WebSocket connection closed: {}", addr),
+            Err(e) => error!("WebSocket error: {}: {}", addr, e),
         }
+    });
+
+    state_clone.ws_connections.lock().await.push(join_handle);
+}
+
+#[derive(Debug, Error)]
+enum HandlerError {
+    #[error("Invalid field: {0}")]
+    FieldError(String),
+    #[error("Invalid expiration time")]
+    InvalidExpires,
+    #[error("Unauthorized")]
+    Unauthorized,
+}
+
+impl IntoResponse for HandlerError {
+    fn into_response(self) -> Response<Body> {
+        let status = match self {
+            HandlerError::Unauthorized => StatusCode::UNAUTHORIZED,
+            _ => StatusCode::BAD_REQUEST,
+        };
+
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "text/plain")
+            .body(Body::from(self.to_string()))
+            .unwrap()
+    }
+}
+
+async fn subtoken_handler(mut multipart: Multipart) -> Result<Response<Body>, HandlerError> {
+    let mut token = None;
+    let mut permissions = None;
+    let mut expires = None;
+
+    // 处理 multipart 字段
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| HandlerError::FieldError(e.to_string()))?
+    {
+        let field_name = field
+            .name()
+            .ok_or(HandlerError::FieldError("Missing field name".into()))?;
+
+        match field_name {
+            "token" => {
+                token =
+                    Some(field.text().await.map_err(|e| {
+                        HandlerError::FieldError(format!("Token field error: {}", e))
+                    })?);
+            }
+            "permissions" => {
+                permissions = Some(field.text().await.map_err(|e| {
+                    HandlerError::FieldError(format!("Permissions field error: {}", e))
+                })?);
+            }
+            "expires" => {
+                let expires_str = field
+                    .text()
+                    .await
+                    .map_err(|e| HandlerError::FieldError(format!("Expires field error: {}", e)))?;
+
+                expires = if !expires_str.is_empty() {
+                    Some(
+                        expires_str
+                            .parse::<u64>()
+                            .map_err(|_| HandlerError::InvalidExpires)?,
+                    )
+                } else {
+                    None
+                };
+            }
+            _ => {
+                return Err(HandlerError::FieldError(format!(
+                    "Unknown field: {}",
+                    field_name
+                )))
+            }
+        }
+    }
+
+    // 验证必需字段
+    let token = token.ok_or(HandlerError::FieldError("Missing token".into()))?;
+    let permissions = permissions.ok_or(HandlerError::FieldError("Missing permissions".into()))?;
+
+    // 验证主令牌
+    if !AppConfig::get().auth.main_token.eq(&token) {
+        return Err(HandlerError::Unauthorized);
+    }
+
+    // 生成 JWT
+    let expires_seconds = expires.unwrap_or(30);
+    let claims = JwtClaims::new(expires_seconds, permissions);
+    let jwt = claims.to_token();
+
+    // 构建响应
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/plain")
+        .body(Body::from(jwt))
+        .unwrap())
+}
+
+// info请求处理
+async fn info_handler() -> impl IntoResponse {
+    // 构建 JSON 响应内容
+    let response_body = json!({
+        "name": "MCServerLauncher Future Daemon Rust",
+        "version": crate::app::VERSION,
+        "api_version": "v1"
+    })
+    .to_string();
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(response_body))
+        .unwrap()
+}
+
+impl WsDriver {
+    pub fn new(app_state: AppState) -> Self {
+        Self { app_state }
     }
 }
