@@ -2,8 +2,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 use uuid::Uuid;
-
-use crate::storage::java::JavaInfo;
+use mcsl_protocol::files::java_info::JavaInfo;
 
 pub static RANGE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+)..(\d+)$").unwrap());
 
@@ -38,7 +37,7 @@ pub enum ActionRequests {
     },
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, PartialEq)]
 #[serde(untagged)]
 pub enum ActionResponses {
     ActionError {
@@ -83,7 +82,7 @@ pub struct Request {
     pub echo: Option<String>,
 }
 
-#[derive(Debug, Serialize, PartialEq, Eq)]
+#[derive(Debug, Serialize, PartialEq)]
 pub struct Response {
     pub status: ResponseStatus,
     pub data: ActionResponses,

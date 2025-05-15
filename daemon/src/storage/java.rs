@@ -1,5 +1,5 @@
 use regex::Regex;
-use serde::Serialize;
+use cached::proc_macro::cached;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::OsStr;
@@ -12,10 +12,9 @@ use tokio::sync::Mutex;
 
 use anyhow::anyhow;
 use log::{debug, trace, warn};
+use mcsl_protocol::files::java_info::JavaInfo;
 use tokio::process::Command;
 use tokio::task::{JoinHandle, JoinSet};
-
-use crate::utils::AsyncFetchable;
 
 const MATCH_KEYS: [&str; 101] = [
     "intellij",
@@ -198,7 +197,7 @@ where
 
                 let abs_path_str_ = abs_path_str.clone();
                 let handler = tokio::spawn(async move {
-                    JavaInfo::try_from_path_output(abs_path_str_, child.await?)
+                    parse_java_info(abs_path_str_, child.await?)
                 });
 
                 let mut map_guard = futures::executor::block_on(join_handle_map.lock());
@@ -221,37 +220,29 @@ where
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
-pub struct JavaInfo {
-    pub version: String,
-    pub path: String,
-    pub arch: String,
-}
+fn parse_java_info(path: String, output: Output) -> anyhow::Result<JavaInfo> {
+    if output.status.success() {
+        let out = String::from_utf8_lossy(&output.stderr).to_string();
 
-impl JavaInfo {
-    fn try_from_path_output(path: String, output: Output) -> anyhow::Result<JavaInfo> {
-        if output.status.success() {
-            let out = String::from_utf8_lossy(&output.stderr).to_string();
+        let version = JAVA_VERSION_REGEX
+            .find(&out)
+            .map(|m| m.as_str())
+            .unwrap_or("Unknown")
+            .to_string();
 
-            let version = JAVA_VERSION_REGEX
-                .find(&out)
-                .map(|m| m.as_str())
-                .unwrap_or("Unknown")
-                .to_string();
+        let arch = if out.contains("64-Bit") { "x64" } else { "x86" }.to_string();
 
-            let arch = if out.contains("64-Bit") { "x64" } else { "x86" }.to_string();
-
-            Ok(JavaInfo {
-                version,
-                path,
-                arch,
-            })
-        } else {
-            Err(anyhow!("Failed to get java version"))
-        }
+        Ok(JavaInfo {
+            version,
+            path,
+            architecture: arch,
+        })
+    } else {
+        Err(anyhow!("Failed to get java version"))
     }
 }
 
+#[cached(time = 3600,size=1)]
 pub async fn java_scan() -> Vec<JavaInfo> {
     let join_handle_map = Arc::new(Mutex::new(HashMap::new()));
 
@@ -309,10 +300,4 @@ pub async fn java_scan() -> Vec<JavaInfo> {
         }
     }
     rv
-}
-
-impl AsyncFetchable for Vec<JavaInfo> {
-    async fn fetch() -> Self {
-        java_scan().await
-    }
 }

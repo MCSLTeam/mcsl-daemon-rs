@@ -151,7 +151,7 @@ impl Files {
         &self,
         file_id: Uuid,
         offset: u64,
-        data: String,
+        data: &str,
     ) -> anyhow::Result<(bool, u64)> {
         // parse string data to bytes ()
         let data: Vec<u16> = data.encode_utf16().collect();

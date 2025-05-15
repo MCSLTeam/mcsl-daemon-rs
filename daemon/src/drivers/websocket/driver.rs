@@ -1,4 +1,3 @@
-use crate::auth::matchable::any;
 use crate::auth::{JwtClaims, JwtCodec};
 use crate::drivers::websocket::WebsocketConnection;
 use crate::drivers::Driver;
@@ -12,9 +11,9 @@ use axum::{
         ws::{WebSocket, WebSocketUpgrade},
         ConnectInfo, State,
     },
-    http::{HeaderMap, HeaderName, HeaderValue, Method, Response, StatusCode},
+    http::{HeaderMap, Method, Response, StatusCode},
     response::IntoResponse,
-    routing::{get, head, post},
+    routing::{get, post},
     Router,
 };
 use log::{debug, error, info};
