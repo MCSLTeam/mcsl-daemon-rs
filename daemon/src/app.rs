@@ -1,7 +1,7 @@
-use std::ops::Deref;
-use std::sync::{Arc, LazyLock};
 use chrono::{DateTime, Utc};
 use log::{debug, info};
+use std::ops::Deref;
+use std::sync::{Arc, LazyLock};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
@@ -52,16 +52,16 @@ fn init_app_state() -> AppState {
 
 pub async fn run_app() -> anyhow::Result<()> {
     let _ = get_start_time();
-    
+
     let state = init_app_state();
     let mut gs = GracefulShutdown::new();
-    
+
     AppConfig::get()
         .drivers
         .enabled
         .iter()
         .for_each(|driver_type| gs.add_driver(driver_type.new_driver(state.clone())));
-    
+
     gs.watch(state.stop_notify.clone()).await;
     info!("Bye.");
     Ok(())

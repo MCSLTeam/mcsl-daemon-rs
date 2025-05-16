@@ -230,7 +230,7 @@ mod tests {
     use super::*;
     use std::fs::{self, File};
     use std::io::Write;
-    
+
     use tempfile::TempDir;
 
     fn create_test_dir() -> Result<TempDir, FileSystemError> {

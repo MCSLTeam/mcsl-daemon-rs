@@ -1,4 +1,4 @@
-use super::inst_config::InstConfig;
+use super::config::InstConfig;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, PartialEq, Eq)]

@@ -10,7 +10,7 @@ pub struct Retcode {
 
 impl Retcode {
     pub fn with_message(&self, msg: &str) -> Retcode {
-        Retcode{
+        Retcode {
             ret_code: self.ret_code,
             message: format!("{}: {}", self.message, msg),
         }

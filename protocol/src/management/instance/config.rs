@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InstanceType {
     None, // 非MC服务器实例类型, (默认值)
@@ -15,31 +15,7 @@ pub enum InstanceType {
     Quilt,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SourceType {
-    /// <summary>
-    ///     仅初始化, 非法值
-    /// </summary>
-    None,
-
-    /// <summary>
-    ///     压缩包(zip)(解压后直接创建)
-    /// </summary>
-    Archive,
-
-    /// <summary>
-    ///     核心文件(按照配置进行目标文件安装)
-    /// </summary>
-    Core,
-
-    /// <summary>
-    ///     脚本文件(运行脚本安装)
-    /// </summary>
-    Script,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TargetType {
     /// <summary>
@@ -57,7 +33,7 @@ pub enum TargetType {
     /// </summary>
     Executable,
 }
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InstanceConfig {
     #[serde(default = "uuid::Uuid::new_v4")]
     pub uuid: Uuid,

@@ -1,5 +1,5 @@
-use regex::Regex;
 use cached::proc_macro::cached;
+use regex::Regex;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::OsStr;
@@ -196,9 +196,8 @@ where
                 let child = runner.output();
 
                 let abs_path_str_ = abs_path_str.clone();
-                let handler = tokio::spawn(async move {
-                    parse_java_info(abs_path_str_, child.await?)
-                });
+                let handler =
+                    tokio::spawn(async move { parse_java_info(abs_path_str_, child.await?) });
 
                 let mut map_guard = futures::executor::block_on(join_handle_map.lock());
                 map_guard.entry(abs_path_str).or_insert(handler);
@@ -242,7 +241,7 @@ fn parse_java_info(path: String, output: Output) -> anyhow::Result<JavaInfo> {
     }
 }
 
-#[cached(time = 3600,size=1)]
+#[cached(time = 3600, size = 1)]
 pub async fn java_scan() -> Vec<JavaInfo> {
     let join_handle_map = Arc::new(Mutex::new(HashMap::new()));
 

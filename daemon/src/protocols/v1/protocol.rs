@@ -1,5 +1,8 @@
 use super::super::Protocol;
+use regex::Regex;
+use std::sync::LazyLock;
 
+use crate::storage::java::java_scan;
 use crate::storage::Files;
 use anyhow::{bail, Context};
 use mcsl_protocol::v1::action::retcode::Retcode;
@@ -7,11 +10,9 @@ use mcsl_protocol::v1::action::status::ActionStatus;
 use mcsl_protocol::v1::action::{
     retcode, ActionParameters, ActionRequest, ActionResponse, ActionResults,
 };
-use std::time::Duration;
 use uuid::Uuid;
-use crate::protocols::v1::action::RANGE_REGEX;
-use crate::storage::java::java_scan;
 
+pub static RANGE_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d+)..(\d+)$").unwrap());
 pub struct ProtocolV1 {
     files: Files,
 }
@@ -99,14 +100,6 @@ impl ProtocolV1 {
             id,
         }
     }
-
-    fn get_echo(raw: &str) -> Option<String> {
-        let parsed: serde_json::Value = serde_json::from_str(raw).ok()?;
-        parsed
-            .get("echo")
-            .and_then(|echo| echo.as_str())
-            .map(|echo| echo.to_string())
-    }
 }
 
 impl ProtocolV1 {
@@ -175,7 +168,7 @@ impl ProtocolV1 {
         file_id: Uuid,
         range: &str,
     ) -> anyhow::Result<ActionResults> {
-        let range_match = RANGE_REGEX.captures(&range);
+        let range_match = RANGE_REGEX.captures(range);
         if range_match.is_none() {
             bail!("invalid range");
         }
@@ -206,8 +199,6 @@ impl ProtocolV1 {
 
 impl ProtocolV1 {
     pub fn new(files: Files) -> Self {
-        Self {
-            files,
-        }
+        Self { files }
     }
 }

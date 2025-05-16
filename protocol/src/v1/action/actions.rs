@@ -1,8 +1,8 @@
+use crate::files::java_info::JavaInfo;
+use crate::v1::action::retcode::Retcode;
 use crate::v1::action::status::ActionStatus;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use crate::files::java_info::JavaInfo;
-use crate::v1::action::retcode::Retcode;
 
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(tag = "action", content = "params", rename_all = "snake_case")]
@@ -18,10 +18,10 @@ pub enum ActionParameters<'req> {
     GetPermissions {},
     GetJavaList {},
     GetDirectoryInfo {
-        path: &'req str
+        path: &'req str,
     },
     GetFileInfo {
-        path: &'req str
+        path: &'req str,
     },
 
     // file down/up-load
@@ -150,6 +150,9 @@ mod tests {
             parameters: ActionParameters::FileDownloadRequest { path: &path },
             id: Uuid::parse_str("a1829c2d-4357-4aef-8a95-544515243faf").unwrap(),
         };
-        assert_eq!(serde_json::from_str::<ActionRequest>(raw).unwrap(), expected);
+        assert_eq!(
+            serde_json::from_str::<ActionRequest>(raw).unwrap(),
+            expected
+        );
     }
 }
