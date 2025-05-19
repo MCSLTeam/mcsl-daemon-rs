@@ -1,5 +1,6 @@
+pub mod comm;
 mod config;
-mod instance;
-mod manager;
+mod factory;
+pub mod instance;
+pub mod manager;
 mod minecraft;
-mod status;

@@ -1,6 +1,15 @@
-use crate::management::instance::{Instance, TInstance, UniversalInstance};
+use crate::management::config::InstanceConfigExt;
+use crate::management::instance::{
+    Instance, Minecraft, TInstance, Universal, UniversalInstance, INST_CFG_FILE_NAME,
+};
+use crate::storage::files::INSTANCES_ROOT;
+use anyhow::{anyhow, Context};
+use futures::SinkExt;
+use log::{debug, warn};
 use mcsl_protocol::management::instance::{InstanceConfig, InstanceFactorySetting, InstanceReport};
 use std::collections::HashMap;
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -57,7 +66,10 @@ impl InstanceContainer {
 pub trait InstManagerTrait {
     async fn add(&self, setting: InstanceFactorySetting) -> anyhow::Result<InstanceConfig>;
     async fn remove(&self, inst_id: Uuid) -> bool;
-    async fn start(&self, inst_id: Uuid) -> anyhow::Result<Arc<dyn UniversalInstance>>;
+    async fn start(
+        &self,
+        inst_id: Uuid,
+    ) -> anyhow::Result<Arc<dyn UniversalInstance + Send + Sync>>;
     async fn stop(&self, inst_id: Uuid) -> bool;
     fn send(&self, inst_id: Uuid, message: &str) -> anyhow::Result<()>;
     fn kill(&self, inst_id: Uuid);
@@ -67,6 +79,129 @@ pub trait InstManagerTrait {
 
 pub struct InstManager {
     instances: InstanceContainer,
+}
+
+impl InstManagerTrait for InstManager {
+    async fn add(&self, setting: InstanceFactorySetting) -> anyhow::Result<InstanceConfig> {
+        todo!()
+    }
+
+    async fn remove(&self, inst_id: Uuid) -> bool {
+        todo!()
+    }
+
+    async fn start(
+        &self,
+        inst_id: Uuid,
+    ) -> anyhow::Result<Arc<dyn UniversalInstance + Send + Sync>> {
+        let instance = self
+            .instances
+            .get_raw(inst_id)
+            .ok_or(anyhow!("Instance not found"))?;
+        instance.start().await?;
+
+        Ok(instance)
+    }
+
+    async fn stop(&self, inst_id: Uuid) -> bool {
+        let instance = self.instances.get_raw(inst_id);
+        if let Some(instance) = instance {
+            match instance.stop() {
+                Ok(_) => true,
+                Err(reason) => {
+                    warn!("Error occurred while stopping instance: {}", reason);
+                    false
+                }
+            }
+        } else {
+            false
+        }
+    }
+
+    fn send(&self, inst_id: Uuid, message: &str) -> anyhow::Result<()> {
+        if let Err(msg) = self
+            .instances
+            .get_raw(inst_id)
+            .ok_or(anyhow!("Instance not found"))?
+            .send(message)
+        {
+            Err(anyhow!("could not send message: {}", message))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn kill(&self, inst_id: Uuid) {
+        todo!()
+    }
+
+    async fn get_report(&self, inst_id: Uuid) -> anyhow::Result<InstanceReport> {
+        todo!()
+    }
+
+    async fn get_total_report(&self) -> anyhow::Result<HashMap<Uuid, InstanceReport>> {
+        todo!()
+    }
+}
+
+impl InstManager {
+    pub fn new() -> Self {
+        let mut manager = Self {
+            instances: InstanceContainer::new(),
+        };
+        manager
+            .init()
+            .context("failed to initialize instance manager")
+            .unwrap();
+        manager
+    }
+
+    fn init(&mut self) -> anyhow::Result<()> {
+        for entry in fs::read_dir(Path::new(INSTANCES_ROOT))? {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+
+            if entry.file_type()?.is_file() {
+                continue;
+            }
+
+            let uuid = match Uuid::parse_str(entry.file_name().to_str().unwrap()) {
+                Ok(uuid) => uuid,
+                Err(_) => continue,
+            };
+
+            let cfg_path = entry.path().join(INST_CFG_FILE_NAME);
+
+            let config = match fs::read_to_string(cfg_path)
+                .ok()
+                .map(|content| serde_json::from_str::<InstanceConfig>(&content).ok())
+                .flatten()
+            {
+                Some(cfg) => cfg,
+                None => continue,
+            };
+
+            if config.uuid != uuid {
+                warn!(
+                    "instance(name={}) with inconsistent uuid found, ignored",
+                    config.name
+                );
+                continue;
+            }
+
+            if config.is_mc_server() {
+                self.instances
+                    .insert(uuid, Instance::<Minecraft>::new(config));
+            } else {
+                self.instances
+                    .insert(uuid, Instance::<Universal>::new(config));
+            }
+            debug!("instance(uuid={}) added", uuid);
+        }
+        Ok(())
+    }
 }
 
 // Example usage with async operations

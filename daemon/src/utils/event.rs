@@ -194,92 +194,34 @@ macro_rules! event_decl {
                 };
                 let listeners = self.listeners.clone();
 
-                tokio::spawn(async move {
-                    for wrapper in listeners_snapshot.iter() {
-                        // 跳过已标记移除的条目
-                        if wrapper.is_removed.load(Ordering::Relaxed) {
-                            continue;
-                        }
-
-                        // 消费回调并判断是否需要移除
-                        // if begin_invoke_wrapper(&wrapper) {
-                        //     Self::_remove_listener(listeners.clone(), wrapper.id);
-                        //     continue;
-                        // }
-                        let should_remove = consume_wrapper(&wrapper);
-
-                        // 正常处理回调逻辑
-                        match &wrapper.callback {
-                            CallbackFn::Sync(cb) => cb(($($arg_name.clone()),*)),
-                            CallbackFn::Async(cb) => {
-                                let fut = cb(($($arg_name.clone()),*));
-                                tokio::spawn(fut);
-                            }
-                        }
-
-                        if should_remove {
-                            Self::_remove_listener(listeners.clone(), wrapper.id);
-                        }
-
+                for wrapper in listeners_snapshot.iter() {
+                    // 跳过已标记移除的条目
+                    if wrapper.is_removed.load(Ordering::Relaxed) {
+                        continue;
                     }
-                });
+
+                    // 消费回调并判断是否需要移除
+                    // if begin_invoke_wrapper(&wrapper) {
+                    //     Self::_remove_listener(listeners.clone(), wrapper.id);
+                    //     continue;
+                    // }
+                    let should_remove = consume_wrapper(&wrapper);
+
+                    // 正常处理回调逻辑
+                    match &wrapper.callback {
+                        CallbackFn::Sync(cb) => cb(($($arg_name.clone()),*)),
+                        CallbackFn::Async(cb) => {
+                            let fut = cb(($($arg_name.clone()),*));
+                            tokio::spawn(fut);
+                        }
+                    }
+
+                    if should_remove {
+                        Self::_remove_listener(listeners.clone(), wrapper.id);
+                    }
+                }
             }
 
-            /// invoke的安全版本，镇压callback中的panic。
-            /// 仅在需要Debug时才调用，release下不要出现此函数。
-            /// 它包含了panic::catch_unwind，以及需要保留一些调试符号来显示unwind信息。
-            pub fn invoke_safe(&self, $($arg_name: $arg_type),*) {
-                let listeners_snapshot = {
-                    let guard = self.listeners.lock().unwrap();
-                    guard.clone()
-                };
-                let listeners = self.listeners.clone();
-
-                tokio::spawn(async move {
-                    let name = stringify!($event_name).to_string();
-                    let mut join_set = tokio::task::JoinSet::new();
-
-                    for wrapper in listeners_snapshot.iter() {
-                        // 跳过已标记移除的条目
-                        if wrapper.is_removed.load(Ordering::Relaxed) {
-                            continue;
-                        }
-
-                        // 消耗callback
-                        let should_remove = consume_wrapper(&wrapper);
-
-                        // 执行callback
-                        match &wrapper.callback {
-                            CallbackFn::Sync(cb) => {
-                                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    cb(($($arg_name.clone()),*)); // TODO 非Copy类型的clone处理, 去除非必要的clone() <==(建议)
-                                }));
-                                if let Err(panic) = result {
-                                    log::warn!("EventSystem: {} sync callback(id={}) panicked; {}", name, wrapper.id, log_panic(panic));
-                                }
-                            }
-                            CallbackFn::Async(cb) => {
-                                let fut = cb(($($arg_name.clone()),*)); // TODO 非Copy类型的clone处理, 去除非必要的clone() <==(建议)
-                                join_set.spawn(fut);
-                            }
-                        }
-
-                        if should_remove {
-                            Self::_remove_listener(listeners.clone(), wrapper.id);
-                        }
-                    }
-
-                    while let Some(res) = join_set.join_next().await{
-                        if let Err(join_err) = res{
-                            if join_err.is_panic(){
-                                log::warn!("EventSystem: {} async callback panicked; {}", name, log_panic(join_err.into_panic()));
-                            } else if join_err.is_cancelled() {
-                                log::warn!("EventSystem: {} async callback cancelled", name);
-                            }
-                        }
-                    }
-                });
-            }
 
             pub async fn invoke_async(&self, $($arg_name: $arg_type),*) {
                 let listeners_snapshot = {
@@ -327,11 +269,6 @@ macro_rules! event_decl {
     };
 }
 
-// mod to_expand{
-//     use super::*;
-//     event_decl!(TestEvent, num: i32, msg: &'static str, data: Arc<String>);
-// }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,83 +297,6 @@ mod tests {
         tokio::task::yield_now().await;
         assert_eq!(counter.load(Ordering::Relaxed), 1);
         event.invoke_async(42, "Hello", "World".to_string()).await;
-        assert_eq!(counter.load(Ordering::Relaxed), 2);
-    }
-
-    #[tokio::test]
-    async fn test_panic_listener() {
-        let _ = pretty_env_logger::try_init();
-        let event = TestEvent::new();
-        let counter = Arc::new(AtomicUsize::new(0));
-        let counter_clone = Arc::clone(&counter);
-        let counter_clone2 = Arc::clone(&counter);
-
-        event.add_sync_listener(
-            move |num, msg, data| {
-                assert_eq!(num, 42);
-                assert_eq!(msg, "Hello");
-                assert_eq!(data, "World".to_string());
-                counter_clone.fetch_add(1, Ordering::Relaxed);
-                panic!("Test panic");
-            },
-            TListener::default(),
-        );
-
-        event.add_sync_listener(
-            move |num, msg, data| {
-                assert_eq!(num, 42);
-                assert_eq!(msg, "Hello");
-                assert_eq!(data, "World".to_string());
-                counter_clone2.fetch_add(1, Ordering::Relaxed);
-            },
-            TListener::default(),
-        );
-
-        event.invoke_safe(42, "Hello", "World".to_string());
-        tokio::task::yield_now().await;
-        assert_eq!(counter.load(Ordering::Relaxed), 2);
-    }
-
-    #[tokio::test]
-    async fn test_panic_async_listener() {
-        let _ = pretty_env_logger::try_init();
-        let event = TestEvent::new();
-        let counter = Arc::new(AtomicUsize::new(0));
-        let counter_clone = Arc::clone(&counter);
-        let counter_clone2 = Arc::clone(&counter);
-
-        event.add_async_listener(
-            move |num, msg, data| {
-                let counter_clone = Arc::clone(&counter_clone);
-                async move {
-                    assert_eq!(num, 42);
-                    assert_eq!(msg, "Hello");
-                    assert_eq!(data, "World".to_string());
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    counter_clone.fetch_add(1, Ordering::Relaxed);
-                    panic!("Test panic async");
-                }
-            },
-            TListener::default(),
-        );
-
-        event.add_async_listener(
-            move |num, msg, data| {
-                let counter_clone2 = Arc::clone(&counter_clone2);
-                async move {
-                    assert_eq!(num, 42);
-                    assert_eq!(msg, "Hello");
-                    assert_eq!(data, "World".to_string());
-
-                    counter_clone2.fetch_add(1, Ordering::Relaxed);
-                }
-            },
-            TListener::default(),
-        );
-
-        event.invoke_safe(42, "Hello", "World".to_string());
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        tokio::task::yield_now().await;
         assert_eq!(counter.load(Ordering::Relaxed), 2);
     }
 

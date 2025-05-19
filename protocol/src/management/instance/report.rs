@@ -7,9 +7,9 @@ use std::collections::HashMap;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InstanceReport {
-    status: InstanceStatus,
-    config: InstanceConfig,
-    properties: HashMap<String, String>,
-    player: Vec<Player>,
-    performance_counter: InstancePerformanceCounter,
+    pub status: InstanceStatus,
+    pub config: InstanceConfig,
+    pub properties: HashMap<String, String>,
+    pub player: Vec<Player>,
+    pub performance_counter: InstancePerformanceCounter,
 }

@@ -1,8 +1,9 @@
+use std::fs;
 use crate::protocols::ProtocolConfig;
 use std::io::Read;
 
 use crate::storage::file::{FileDownloadInfo, FileUploadInfo};
-use anyhow::{anyhow, bail};
+use anyhow::{anyhow, bail, Context};
 use log::debug;
 use sha1::{Digest, Sha1};
 use tokio::fs::File;
@@ -11,8 +12,9 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt, SeekFrom};
 use scc::HashMap;
 use uuid::Uuid;
 
-const ROOT: &str = "daemon1";
-const DOWNLOAD_ROOT: &str = "daemon1/downloads";
+pub const ROOT: &str = "daemon";
+pub const DOWNLOAD_ROOT: &str = "daemon/downloads";
+pub const INSTANCES_ROOT: &str = "daemon/instances";
 
 pub struct Files {
     protocol_config: ProtocolConfig,
@@ -25,11 +27,19 @@ pub struct Files {
 // files utils
 impl Files {
     pub fn new(protocol_config: ProtocolConfig) -> Self {
+        Self::init_dirs().context("failed to initialize directories").unwrap();
         Self {
             protocol_config,
             upload_sessions: HashMap::default(),
             download_sessions: HashMap::default(),
         }
+    }
+    
+    fn init_dirs() -> std::io::Result<()> {
+        fs::create_dir_all(ROOT)?;
+        fs::create_dir_all(DOWNLOAD_ROOT)?;
+        fs::create_dir_all(INSTANCES_ROOT)?;
+        Ok(())
     }
 
     // 算法层面，判断path是否在root下
