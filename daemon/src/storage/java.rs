@@ -1,5 +1,5 @@
+use cached::proc_macro::cached;
 use regex::Regex;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::env;
 use std::ffi::OsStr;
@@ -12,10 +12,9 @@ use tokio::sync::Mutex;
 
 use anyhow::anyhow;
 use log::{debug, trace, warn};
+use mcsl_protocol::files::java_info::JavaInfo;
 use tokio::process::Command;
 use tokio::task::{JoinHandle, JoinSet};
-
-use crate::utils::AsyncFetchable;
 
 const MATCH_KEYS: [&str; 101] = [
     "intellij",
@@ -177,8 +176,7 @@ where
                 .map(|name| {
                     let name_lower = name.to_ascii_lowercase();
                     if cfg!(windows) {
-                        name_lower == JAVA_NAME
-                            && path.extension().map_or(false, |ext| ext == "exe")
+                        name_lower == JAVA_NAME && path.extension().is_some_and(|ext| ext == "exe")
                     } else {
                         name_lower == JAVA_NAME
                     }
@@ -198,9 +196,8 @@ where
                 let child = runner.output();
 
                 let abs_path_str_ = abs_path_str.clone();
-                let handler = tokio::spawn(async move {
-                    JavaInfo::try_from_path_output(abs_path_str_, child.await?)
-                });
+                let handler =
+                    tokio::spawn(async move { parse_java_info(abs_path_str_, child.await?) });
 
                 let mut map_guard = futures::executor::block_on(join_handle_map.lock());
                 map_guard.entry(abs_path_str).or_insert(handler);
@@ -222,37 +219,29 @@ where
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
-pub struct JavaInfo {
-    pub version: String,
-    pub path: String,
-    pub arch: String,
-}
+fn parse_java_info(path: String, output: Output) -> anyhow::Result<JavaInfo> {
+    if output.status.success() {
+        let out = String::from_utf8_lossy(&output.stderr).to_string();
 
-impl JavaInfo {
-    fn try_from_path_output(path: String, output: Output) -> anyhow::Result<JavaInfo> {
-        if output.status.success() {
-            let out = String::from_utf8_lossy(&output.stderr).to_string();
+        let version = JAVA_VERSION_REGEX
+            .find(&out)
+            .map(|m| m.as_str())
+            .unwrap_or("Unknown")
+            .to_string();
 
-            let version = JAVA_VERSION_REGEX
-                .find(&out)
-                .map(|m| m.as_str())
-                .unwrap_or("Unknown")
-                .to_string();
+        let arch = if out.contains("64-Bit") { "x64" } else { "x86" }.to_string();
 
-            let arch = if out.contains("64-Bit") { "x64" } else { "x86" }.to_string();
-
-            Ok(JavaInfo {
-                version,
-                path,
-                arch,
-            })
-        } else {
-            Err(anyhow!("Failed to get java version"))
-        }
+        Ok(JavaInfo {
+            version,
+            path,
+            architecture: arch,
+        })
+    } else {
+        Err(anyhow!("Failed to get java version"))
     }
 }
 
+#[cached(time = 600, size = 1)]
 pub async fn java_scan() -> Vec<JavaInfo> {
     let join_handle_map = Arc::new(Mutex::new(HashMap::new()));
 
@@ -310,10 +299,4 @@ pub async fn java_scan() -> Vec<JavaInfo> {
         }
     }
     rv
-}
-
-impl AsyncFetchable for Vec<JavaInfo> {
-    async fn fetch() -> Self {
-        java_scan().await
-    }
 }

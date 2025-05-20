@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
-use crate::{drivers::DriversConfig, protocols::ProtocolConfig};
 use crate::auth::AuthConfig;
 use crate::storage::file::{Config, FileIoWithBackup};
+use crate::{drivers::DriversConfig, protocols::ProtocolConfig};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 /// immutable through full lifetime of app, unless restart app.
@@ -11,7 +11,7 @@ use crate::storage::file::{Config, FileIoWithBackup};
 pub struct AppConfig {
     pub drivers: DriversConfig,
     pub protocols: ProtocolConfig,
-    pub auth: AuthConfig
+    pub auth: AuthConfig,
 }
 
 impl FileIoWithBackup for AppConfig {}

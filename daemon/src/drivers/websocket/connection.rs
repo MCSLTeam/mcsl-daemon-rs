@@ -1,21 +1,44 @@
+use axum::extract::ws::{close_code, CloseFrame, Message, WebSocket};
 use futures::{SinkExt, StreamExt};
-use hyper::upgrade::Upgraded;
-use hyper_util::rt::TokioIo;
 use log::{debug, info};
 use std::net::SocketAddr;
+use std::ops::Add;
 use std::sync::atomic::AtomicUsize;
 use std::sync::{atomic, Arc};
 use tokio::select;
 use tokio::sync::mpsc::WeakUnboundedSender;
 use tokio::sync::mpsc::{error::SendError, unbounded_channel, UnboundedSender};
-use tokio_tungstenite::tungstenite::{
-    protocol::{frame::coding::CloseCode, CloseFrame},
-    Message,
-};
-use tokio_tungstenite::WebSocketStream;
 
 use crate::app::AppState;
-use crate::protocols::{Protocol, Protocols};
+use crate::auth::{JwtClaims, Permissions};
+
+pub struct WebsocketContext {
+    pub permissions: Permissions,
+    pub expire_to: chrono::DateTime<chrono::Utc>,
+    pub jti: uuid::Uuid,
+}
+
+impl Default for WebsocketContext {
+    fn default() -> Self {
+        Self {
+            permissions: Permissions::always(),
+            expire_to: chrono::Utc::now().add(chrono::Duration::days(10000)),
+            jti: uuid::Uuid::default(),
+        }
+    }
+}
+
+impl TryFrom<JwtClaims> for WebsocketContext {
+    type Error = String;
+
+    fn try_from(value: JwtClaims) -> Result<Self, Self::Error> {
+        Ok(Self {
+            permissions: Permissions::from_str(&value.perms).map_err(|e| e.to_string())?,
+            expire_to: chrono::DateTime::from_timestamp(value.exp as i64, 0).unwrap(),
+            jti: uuid::Uuid::parse_str(&value.jti).map_err(|e| e.to_string())?,
+        })
+    }
+}
 
 pub struct WebsocketConnection {
     #[allow(dead_code)]
@@ -27,12 +50,12 @@ pub struct WebsocketConnection {
 
 impl WebsocketConnection {
     fn new(
-        app_resources: AppState,
+        app_state: AppState,
         sender: UnboundedSender<Message>,
         addr: SocketAddr,
     ) -> WebsocketConnection {
         WebsocketConnection {
-            app_state: app_resources,
+            app_state,
             sender,
             addr,
         }
@@ -50,13 +73,16 @@ impl WebsocketConnection {
                 debug!("could not send message due to ws sender dropped: {}", msg);
             }
         } else {
-            debug!("could not send message due to ws sender dropped: {}", data);
+            debug!(
+                "could not send message due to ws sender dropped: {:#?}",
+                data
+            );
         }
     }
 
     pub fn stop(&self) -> anyhow::Result<()> {
         let close_frame = Some(CloseFrame {
-            code: CloseCode::Normal,
+            code: 1000,
             reason: "".into(),
         });
         self.handle_closing(close_frame.as_ref());
@@ -71,6 +97,12 @@ pub struct WsConnManager {
 
 unsafe impl Send for WsConnManager {}
 
+impl Default for WsConnManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WsConnManager {
     pub fn new() -> Self {
         Self {
@@ -81,15 +113,15 @@ impl WsConnManager {
 }
 
 impl WsConnManager {
-    fn add(&self, conn: Arc<WebsocketConnection>) {
-        let _ = self
-            .connections
-            .insert(self.id.fetch_add(1, atomic::Ordering::Relaxed), conn);
+    fn add(&self, conn: Arc<WebsocketConnection>) -> usize {
+        let id = self.id.fetch_add(1, atomic::Ordering::Relaxed);
+        let _ = self.connections.insert(id, conn);
+        id
     }
 
     pub async fn serve_connection(
         &self,
-        ws: WebSocketStream<TokioIo<Upgraded>>,
+        ws: WebSocket,
         app_state: AppState,
         peer_addr: SocketAddr,
     ) -> anyhow::Result<()> {
@@ -103,7 +135,7 @@ impl WsConnManager {
             peer_addr,
         ));
 
-        let cancel_token = app_state.cancel_token.clone();
+        let cancel_token = app_state.stop_notify.clone();
 
         let ws_conn_clone = ws_conn.clone();
 
@@ -116,7 +148,6 @@ impl WsConnManager {
                             ws_conn_clone.handle_received(m)?
                         }
                         else {
-                            info!("connection read loop ended");
                             break;
                         }
                     }
@@ -133,16 +164,14 @@ impl WsConnManager {
                             }
                         }
                         else {
-                            info!("connection write loop ended");
                             break;
                         }
                     }
 
                     // cancel
                     _ = cancel_token.notified() => {
-                        // ws_conn_clone.stop()?;
                         outgoing.send(Message::Close(Some(CloseFrame{
-                            code: CloseCode::Normal,
+                            code: close_code::NORMAL,
                             reason: "daemon closed".into()
                         }))).await?;
                         info!("websocket connection from {} closed", peer_addr);
@@ -152,9 +181,9 @@ impl WsConnManager {
             }
             anyhow::Ok(())
         };
-
+        let id = self.add(ws_conn);
         let rv = tokio::spawn(connection_loop()).await?;
-        info!("connection finished");
+        self.connections.remove(&id);
         rv
     }
 }

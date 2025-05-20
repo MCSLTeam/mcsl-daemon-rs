@@ -1,5 +1,8 @@
-mod inst_config;
-mod inst_factory;
-mod inst_manager;
-mod inst_status;
-mod instance;
+mod config;
+mod factory;
+
+pub mod comm;
+pub mod instance;
+pub mod manager;
+pub mod minecraft;
+mod strategy;

@@ -198,7 +198,7 @@ impl<'de> Deserialize<'de> for Permission {
     {
         struct PermissionVisitor;
 
-        impl<'de> Visitor<'de> for PermissionVisitor {
+        impl Visitor<'_> for PermissionVisitor {
             type Value = Permission;
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -251,7 +251,13 @@ impl Permissions {
 
     pub fn never() -> Self {
         Self {
-            permissions: Vec::new(),
+            permissions: vec![],
+        }
+    }
+
+    pub fn always() -> Self {
+        Self {
+            permissions: vec![Permission::new("*").unwrap()],
         }
     }
 

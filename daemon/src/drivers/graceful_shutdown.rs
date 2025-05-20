@@ -1,8 +1,10 @@
 use log::debug;
 use tokio::task::JoinSet;
 
-use super::driver::{Driver, StopToken};
+use super::driver::Driver;
 use std::sync::Arc;
+use tokio::sync::Notify;
+
 pub struct GracefulShutdown {
     drivers: Vec<Arc<dyn Driver>>,
 }
@@ -18,13 +20,12 @@ impl GracefulShutdown {
         self.drivers.push(Arc::new(driver));
     }
 
-    pub async fn watch(mut self) {
-        let tokens: Vec<StopToken> = self.drivers.iter().map(|d| d.stop_token()).collect();
+    pub async fn watch(mut self, stop_notify: Arc<Notify>) {
         let shutdown = async move {
             tokio::signal::ctrl_c()
                 .await
                 .expect("graceful shutdown can't install ctrl+c signal handler");
-            tokens.into_iter().for_each(|t| t.notify_one());
+            stop_notify.notify_waiters();
         };
 
         let mut join_set = JoinSet::new();

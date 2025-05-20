@@ -1,6 +1,6 @@
-use std::borrow::Cow;
 use super::{v1::ProtocolV1Config, Protocols};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolConfig {

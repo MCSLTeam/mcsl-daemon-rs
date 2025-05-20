@@ -1,13 +1,13 @@
 use crate::app::run_app;
 
 mod app;
+mod auth;
+pub mod config;
 mod drivers;
 mod management;
 mod protocols;
 mod storage;
 mod utils;
-mod auth;
-pub mod config;
 
 fn init_logger() {
     unsafe {
@@ -15,16 +15,6 @@ fn init_logger() {
     }
     pretty_env_logger::init();
 }
-
-// async fn scan_java() -> anyhow::Result<()> {
-//     let begin = std::time::Instant::now();
-//     let rv = storage::java::java_scan().await;
-//     for item in rv {
-//         info!("{} {} {}", item.version, item.path, item.arch);
-//     }
-//     info!("java search elapsed: {}ms", begin.elapsed().as_millis());
-//     Ok(())
-// }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

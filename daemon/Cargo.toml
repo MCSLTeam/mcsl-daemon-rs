@@ -4,14 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-mcsl_protocol = { path = "../protocol" }
+mcsl_protocol = { path = "../protocol", features = ["v1"] }
 
 ## 序列化/反序列化
-serde = { workspace = true}
+serde = { workspace = true }
 serde_json = "1.0"
 
 ## 数据处理和标识
-uuid = { version = "1.10.0", features = ["v4", "serde"] }
+uuid = { workspace = true }
 sha1 = "0.10.6"
 encoding = "0.2.33"
 chrono = "0.4.38"
@@ -37,19 +37,25 @@ async-trait = "0.1.83"
 futures = "0.3.30"
 
 ## 网络和 HTTP
-hyper = { version = "1.4.1", features = ["server", "http1"] }
-hyper-util = { version = "0.1.6", features = ["tokio", "http1", "server-auto"] }
-http-body-util = "0.1.2"
-tokio-tungstenite = "0.23.1"
+axum = { version = "0.8.4", features = ["ws", "tokio", "multipart"] }
+tower-http = { version = "0.6.4", features = ["cors"] }
 
 ## 错误处理
 anyhow = "1.0"
 thiserror = "2"
 
 ## 工具和通用库
+cached = { version = "0", features = ["async", "ahash"] }
+sysinfo = "0"
 regex = "1.11.0"
 scc = "2.2.0"
 ahash = "0.8.11"
+lazy_static = "1.5.0"
+
+## 跨平台API
+nix = { version = "0.27", features = ["signal"] }  # For Unix
+winapi = { version = "0.3", features = ["processthreadsapi", "tlhelp32", "handleapi", "winnt", "minwindef"] }
+bytes = "1.10.1"  # For Windows
 
 
 [profile.fat-release]
