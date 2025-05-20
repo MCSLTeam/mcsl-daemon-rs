@@ -1,5 +1,5 @@
-use std::fs;
 use crate::protocols::ProtocolConfig;
+use std::fs;
 use std::io::Read;
 
 use crate::storage::file::{FileDownloadInfo, FileUploadInfo};
@@ -27,14 +27,16 @@ pub struct Files {
 // files utils
 impl Files {
     pub fn new(protocol_config: ProtocolConfig) -> Self {
-        Self::init_dirs().context("failed to initialize directories").unwrap();
+        Self::init_dirs()
+            .context("failed to initialize directories")
+            .unwrap();
         Self {
             protocol_config,
             upload_sessions: HashMap::default(),
             download_sessions: HashMap::default(),
         }
     }
-    
+
     fn init_dirs() -> std::io::Result<()> {
         fs::create_dir_all(ROOT)?;
         fs::create_dir_all(DOWNLOAD_ROOT)?;

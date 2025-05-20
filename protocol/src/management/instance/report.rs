@@ -1,5 +1,5 @@
 use crate::management::instance::config::InstanceConfig;
-use crate::management::instance::performance::InstancePerformanceCounter;
+use crate::management::instance::performance::InstanceProcessMetrics;
 use crate::management::instance::status::InstanceStatus;
 use crate::management::minecraft::Player;
 use serde::{Deserialize, Serialize};
@@ -11,5 +11,5 @@ pub struct InstanceReport {
     pub config: InstanceConfig,
     pub properties: HashMap<String, String>,
     pub player: Vec<Player>,
-    pub performance_counter: InstancePerformanceCounter,
+    pub performance_counter: InstanceProcessMetrics,
 }

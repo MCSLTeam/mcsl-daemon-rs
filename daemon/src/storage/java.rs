@@ -241,7 +241,7 @@ fn parse_java_info(path: String, output: Output) -> anyhow::Result<JavaInfo> {
     }
 }
 
-#[cached(time = 3600, size = 1)]
+#[cached(time = 600, size = 1)]
 pub async fn java_scan() -> Vec<JavaInfo> {
     let join_handle_map = Arc::new(Mutex::new(HashMap::new()));
 

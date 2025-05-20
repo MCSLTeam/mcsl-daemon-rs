@@ -8,13 +8,11 @@ use tokio::task::JoinHandle;
 use crate::config::AppConfig;
 use crate::drivers::websocket::WsConnManager;
 use crate::drivers::GracefulShutdown;
+use crate::management::manager::InstManager;
 use crate::protocols::v1::ProtocolV1;
 use crate::protocols::Protocols;
 use crate::storage::Files;
 use tokio::sync::Notify;
-use uuid::Uuid;
-use crate::management::comm::process_helper::ProcessHelper;
-use crate::management::manager::{InstManager, InstManagerTrait};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 static START_TIME: LazyLock<DateTime<Utc>> = LazyLock::new(Utc::now);
@@ -25,7 +23,7 @@ pub struct ApplicationState {
     pub protocol_v1: Arc<ProtocolV1>,
     pub ws_connections: Mutex<Vec<JoinHandle<()>>>,
     pub ws_conn_manager: WsConnManager,
-    pub inst_manager: InstManager
+    pub inst_manager: InstManager,
 }
 pub type AppState = Arc<ApplicationState>;
 
@@ -50,7 +48,7 @@ fn init_app_state() -> AppState {
         ws_connections: Mutex::new(vec![]),
         stop_notify: Arc::new(Notify::new()),
         ws_conn_manager: WsConnManager::new(),
-        inst_manager: InstManager::new()
+        inst_manager: InstManager::new(),
     };
     Arc::new(resources)
 }
@@ -66,10 +64,6 @@ pub async fn run_app() -> anyhow::Result<()> {
         .enabled
         .iter()
         .for_each(|driver_type| gs.add_driver(driver_type.new_driver(state.clone())));
-    
-    // let uuid = Uuid::parse_str("fdbf680c-fe52-4f1d-89ba-a0d9d8b857b2").unwrap();
-    // let state_clone = state.clone();
-    // state_clone.inst_manager.start(uuid).await?;
 
     gs.watch(state.stop_notify.clone()).await;
     info!("Bye.");

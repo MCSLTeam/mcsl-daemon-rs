@@ -1,19 +1,20 @@
-use anyhow::Result;
+use anyhow::{anyhow, bail, Result};
+use cached::proc_macro::cached;
 use lazy_static::lazy_static;
-use log::{error, warn};
+use log::{debug, warn};
 use regex::Regex;
 use std::ffi::OsString;
 use std::path::Path;
 use std::sync::{atomic, Arc};
-use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::select;
-use tokio::sync::{broadcast, mpsc, Notify};
+use tokio::sync::{broadcast, mpsc, oneshot};
 
+use crate::management::comm::process_helper::ProcessHelper;
 use crate::management::config::InstanceConfigExt;
-use mcsl_protocol::management::instance::{
-    InstanceConfig, InstancePerformanceCounter, InstanceStatus,
-};
+use crate::management::strategy::InstanceProcessStrategy;
+use mcsl_protocol::management::instance::{InstanceConfig, InstanceProcessMetrics, InstanceStatus};
 
 lazy_static! {
     static ref DONE_PATTERN: Regex =
@@ -30,37 +31,36 @@ pub struct ProcessStartInfo {
 // 进程监控器
 #[derive(Clone)]
 pub struct ProcessMonitor {
-    process_id: i32,
-    is_mc_server: bool,
-    frequency: Duration,
+    process_id: u32,
 }
 
-impl ProcessMonitor {
-    pub fn new(process_id: i32, is_mc_server: bool, frequency: Duration) -> Self {
-        ProcessMonitor {
-            process_id,
-            is_mc_server,
-            frequency,
+#[cached(time = 2, size = 128)]
+async fn _get_process_metrics(pid: u32) -> InstanceProcessMetrics {
+    match ProcessHelper::get_process_metrics(pid).await {
+        Ok(pc) => pc,
+        Err(err) => {
+            warn!("Failed to get process metric: {}", err);
+            InstanceProcessMetrics::default()
         }
     }
+}
+impl ProcessMonitor {
+    pub fn new(process_id: u32) -> Self {
+        ProcessMonitor { process_id }
+    }
 
-    // TODO
-    pub async fn get_monitor_data(self) -> InstancePerformanceCounter {
-        InstancePerformanceCounter {
-            cpu: 0.0,
-            memory: 0,
-        }
+    pub async fn get_process_metrics(self) -> InstanceProcessMetrics {
+        _get_process_metrics(self.process_id).await
     }
 }
 
 // 实例进程
 pub struct InstanceProcess {
-    server_process_id: i32,
+    process_id: u32,
     exited: Arc<atomic::AtomicBool>,
-    kill_notify: Arc<Notify>,
+    term_signal: Option<oneshot::Sender<bool>>,
     log_tx: broadcast::Sender<String>,
-    input_rx: broadcast::Receiver<String>,
-    status_tx: mpsc::Sender<InstanceStatus>,
+    status_tx: broadcast::Sender<InstanceStatus>,
     pub monitor: ProcessMonitor,
 }
 
@@ -69,8 +69,9 @@ impl InstanceProcess {
         config: &InstanceConfig,
         is_mc_server: bool,
         log_tx: broadcast::Sender<String>,
-        input_rx: broadcast::Receiver<String>,
-        status_tx: mpsc::Sender<InstanceStatus>,
+        mut input_rx: broadcast::Receiver<String>,
+        status_tx: broadcast::Sender<InstanceStatus>,
+        strategy: Arc<dyn InstanceProcessStrategy + Send + Sync>,
     ) -> Result<Self, std::io::Error> {
         let start_info = config.get_start_info();
         let working_dir = config.get_working_dir();
@@ -102,121 +103,135 @@ impl InstanceProcess {
 
         // prepare process resource
         let mut process = cmd.spawn()?;
-        let server_process_id = process.id().unwrap_or(0) as i32;
 
-        let kill_notify = Arc::new(Notify::new());
+        // update process status
+        strategy.on_process_start(&status_tx);
+
+        let process_id = process.id().unwrap_or(0);
+
+        #[cfg(not(windows))]
+        let server_process_id = process_id;
+
+        #[cfg(windows)]
+        let server_process_id = process
+            .id()
+            .map(|id| {
+                ProcessHelper::child_id(id, Some(&config.target))
+                    .map(|ids| ids.first().into())
+                    .ok()
+            })
+            .flatten()
+            .unwrap_or(0);
+
+        let (stop_tx, term_rx) = oneshot::channel();
         let exited = Arc::new(atomic::AtomicBool::new(false));
-        let monitor =
-            ProcessMonitor::new(server_process_id, is_mc_server, Duration::from_millis(2000));
+        let monitor = ProcessMonitor::new(server_process_id);
 
         let (output_tx, output_rx) = mpsc::channel::<String>(100);
 
         let stdout = process.stdout.take().unwrap();
         let stderr = process.stderr.take().unwrap();
+        let mut stdin = process.stdin.take().unwrap();
+
         tokio::spawn({
             use tokio::io::{AsyncBufReadExt, BufReader};
             let mut stdout = BufReader::new(stdout).lines();
             let mut stderr = BufReader::new(stderr).lines();
             let log_tx = log_tx.clone();
             let status_tx = status_tx.clone();
-            let kill_notify = kill_notify.clone();
+            let exited = exited.clone();
+            let strategy = strategy.clone();
 
             async move {
+                let term_rx_fut = term_rx;
+                tokio::pin!(term_rx_fut);
                 loop {
                     select! {
+                        // 监听进程stdout
                         line = stdout.next_line() => {
                             if let Ok(Some(line)) = line {
                                 if is_mc_server {
-                                    Self::process_mc_line(&line,&status_tx).await;
+                                    strategy.on_line_received(&line,&status_tx);
                                 }
                                 let _ = log_tx.send(line).ok();
                             }
                         }
+                        // 监听进程stderr
                         line = stderr.next_line() => {
                             if let Ok(Some(line)) = line {
                                 let stderr_line = format!("[STDERR] {}", line);
                                 if is_mc_server {
-                                    Self::process_mc_line(&line,&status_tx).await;
+                                    strategy.on_line_received(&line,&status_tx);
                                 }
                                 let _ = log_tx.send(stderr_line).ok();
                             }
                         }
-                        result = process.wait() => {
-                            if result.is_ok() {
-                                let _ = status_tx.send(InstanceStatus::Stopped).await;
+                        // 进程stdin输入
+                        line = input_rx.recv() => {
+                            if let Ok(line) = line {
+                                if let Err(err) = stdin.write_all(line.as_bytes()).await{
+                                    warn!("Error while writing to stdin: {}", err);
+                                }
                             }
+                        }
+                        // 等待进程
+                        result = process.wait() => {
+                            debug!("Process(pid={}) exited with {:?}",process_id ,result);
+                            // TODO 若上次为Crashed则不更新Stopped
+                            let _ = status_tx.send(InstanceStatus::Stopped);
+                            exited.store(true, atomic::Ordering::Relaxed);
                             break;
                         }
-                        _ = kill_notify.notified() => {
-                            if let Err(err) = process.kill().await {
-                                warn!("Could not kill process (pid={}): {}", server_process_id, err);
+                        // 关闭进程
+                        force = term_rx_fut.as_mut() => {
+                            let force = match force{
+                                Ok(force) => force,
+                                Err(_) => {break;}
+                            };
+
+                            if force{
+                                if let Err(err) = process.kill().await {
+                                    warn!("Kill failed (pid={}): {}", process_id, err);
+                                }
+                            }else if let Err(err) =  ProcessHelper::term(process_id){
+                                warn!("Kill failed (pid={}): {}", process_id, err);
                             }
-                            let _ = status_tx.send(InstanceStatus::Stopped).await;
+
+                            status_tx.send(InstanceStatus::Stopped).ok();
+                            exited.store(true, atomic::Ordering::Relaxed);
                             break;
                         }
                     }
                 }
-                let result = process.wait().await;
-                if result.is_ok() {
-                    let _ = status_tx.send(InstanceStatus::Stopped).await;
-                }
             }
         });
 
-        // tokio::spawn({
-        //     let status_tx = status_tx.clone();
-        //     let kill_notify = kill_notify.clone();
-        //     let exited = exited.clone();
-        //     async move {
-        //         let id = process.id().unwrap_or(0) as i32;
-        //         select! {
-        //             _ = process.wait() => {}
-        //             _ = kill_notify.notified() => {
-        //                 if let Err(err) = process.start_kill(){
-        //                     error!("Could not start kill process(pid={}): {}",id ,err);
-        //                 };
-        //             }
-        //         }
-        //
-        //         exited.store(true, atomic::Ordering::Relaxed);
-        //         // TODO 若上次为Crashed则不更新Stopped
-        //         let _ = status_tx.send(InstanceStatus::Stopped).await;
-        //     }
-        // });
-
         Ok(InstanceProcess {
-            server_process_id,
-            input_rx,
+            process_id,
             exited,
-            kill_notify,
+            term_signal: Some(stop_tx),
             log_tx,
             status_tx,
             monitor,
         })
     }
 
-    pub fn kill(&self) {
-        self.kill_notify.notify_one();
+    pub fn kill(mut self) {
+        self.term_signal.take().map(|stop| stop.send(true));
+    }
+
+    pub fn term(&mut self) -> Result<()> {
+        match self.term_signal.take() {
+            Some(stop) => stop
+                .send(false)
+                .map_err(|_| anyhow!("Could not send termination signal")),
+            None => {
+                bail!("Termination signal sent to stop process")
+            }
+        }
     }
 
     pub fn exited(&self) -> bool {
         self.exited.load(atomic::Ordering::SeqCst)
-    }
-}
-
-impl InstanceProcess {
-    fn stop_process(id: i32) {}
-
-    fn kill_process(id: i32) {}
-
-    async fn process_mc_line(line: &str, status_tx: &mpsc::Sender<InstanceStatus>) {
-        let line = line.trim_end();
-        if DONE_PATTERN.is_match(line) {
-            let _ = status_tx.send(InstanceStatus::Running).await;
-        } else if line.contains("Stopping the server") {
-            let _ = status_tx.send(InstanceStatus::Stopping).await;
-        } else if line.contains("Minecraft has crashed") {
-            let _ = status_tx.send(InstanceStatus::Crashed).await;
-        }
     }
 }

@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 lazy_static! {
     static ref STRING_ENVS: HashMap<String, String> = {
         std::env::vars_os()
-            .into_iter()
             .map(|(var, value)| {
                 (
                     var.to_string_lossy().to_string(),
