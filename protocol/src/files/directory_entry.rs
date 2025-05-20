@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fs::{self, DirEntry, Metadata};
 use std::io;
+#[cfg(windows)]
+use std::os::windows::fs::MetadataExt;
 use std::path::Path;
 use thiserror::Error;
 
