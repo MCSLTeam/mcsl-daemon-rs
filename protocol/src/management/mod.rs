@@ -1,2 +1,2 @@
 pub mod instance;
-mod minecraft;
+pub mod minecraft;

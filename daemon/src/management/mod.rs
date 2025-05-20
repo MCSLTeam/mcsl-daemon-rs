@@ -4,5 +4,5 @@ mod factory;
 pub mod comm;
 pub mod instance;
 pub mod manager;
-mod minecraft;
+pub mod minecraft;
 mod strategy;

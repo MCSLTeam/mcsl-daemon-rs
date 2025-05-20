@@ -54,7 +54,8 @@ lazy_static = "1.5.0"
 
 ## 跨平台API
 nix = { version = "0.27", features = ["signal"] }  # For Unix
-winapi = { version = "0.3", features = ["processthreadsapi", "tlhelp32", "handleapi", "winnt", "minwindef"] }  # For Windows
+winapi = { version = "0.3", features = ["processthreadsapi", "tlhelp32", "handleapi", "winnt", "minwindef"] }
+bytes = "1.10.1"  # For Windows
 
 
 [profile.fat-release]

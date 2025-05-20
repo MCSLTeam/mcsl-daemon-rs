@@ -1,3 +1,3 @@
-mod player;
+mod slp;
 
-pub use player::*;
+pub use slp::*;

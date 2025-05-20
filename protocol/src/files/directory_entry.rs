@@ -4,12 +4,6 @@ use std::io;
 use std::path::Path;
 use thiserror::Error;
 
-#[cfg(windows)]
-use std::os::windows::fs::MetadataExt;
-
-#[cfg(unix)]
-use std::os::unix::fs::MetadataExt;
-
 // 自定义错误类型
 #[derive(Error, Debug)]
 pub enum FileSystemError {
