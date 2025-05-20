@@ -1,6 +1,5 @@
 /target
 /daemon_working_dir
-/daemon
 *.bak
 *.json
 *.zip
