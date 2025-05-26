@@ -35,11 +35,11 @@ pub enum SourceType {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct InstanceFactorySetting {
-    source: String,
-    source_type: SourceType,
+    pub source: String,
+    pub source_type: SourceType,
     #[serde(default = "InstanceFactoryMirror::default")]
-    mirror: InstanceFactoryMirror,
+    pub mirror: InstanceFactoryMirror,
 
     #[serde(flatten)]
-    config: InstanceConfig,
+    pub config: InstanceConfig,
 }

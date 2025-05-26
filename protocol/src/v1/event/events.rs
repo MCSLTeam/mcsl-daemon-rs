@@ -1,24 +1,6 @@
-use crate::status::DaemonReport;
+use crate::v1::event::data::{DaemonReportEventData, InstanceLogEventData};
+use crate::v1::event::meta::InstanceLogEventMeta;
 use serde::Serialize;
-use uuid::Uuid;
-
-pub trait EventMeta: PartialEq {}
-
-#[derive(Debug, Serialize, PartialEq)]
-pub struct InstanceLogEventMeta {
-    instance_id: Uuid,
-}
-impl EventMeta for InstanceLogEventMeta {}
-
-#[derive(Debug, Serialize, PartialEq)]
-pub struct InstanceLogEventData {
-    log: String,
-}
-
-#[derive(Debug, Serialize, PartialEq)]
-pub struct DaemonReportEventData {
-    report: DaemonReport,
-}
 
 #[derive(Debug, Serialize, PartialEq)]
 #[serde(tag = "event", rename_all = "snake_case")]
@@ -38,4 +20,10 @@ pub struct EventPacket {
     #[serde(flatten)]
     event: Events,
     time: u64,
+}
+
+impl EventPacket {
+    pub fn new(event: Events, time: u64) -> Self {
+        Self { event, time }
+    }
 }

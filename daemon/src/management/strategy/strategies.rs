@@ -1,6 +1,6 @@
 use crate::management::instance::Instance;
+use crate::management::strategy::InstanceBehaviorStrategy;
 use crate::management::strategy::InstanceProcessStrategy;
-use crate::management::strategy::InstanceStrategy;
 use anyhow::bail;
 use lazy_static::lazy_static;
 use mcsl_protocol::management::instance::{InstanceReport, InstanceStatus};
@@ -14,13 +14,13 @@ lazy_static! {
 }
 
 pub trait StrategyConstructor {
-    fn new() -> impl InstanceStrategy + InstanceProcessStrategy + Send + Sync;
+    fn new() -> impl InstanceBehaviorStrategy + InstanceProcessStrategy + Send + Sync;
 }
 pub struct UniversalInstanceStrategy {}
 pub struct MinecraftInstanceStrategy {}
 
 #[async_trait::async_trait]
-impl InstanceStrategy for UniversalInstanceStrategy {
+impl InstanceBehaviorStrategy for UniversalInstanceStrategy {
     async fn get_report(&self, this: &Instance) -> InstanceReport {
         let status = {
             let state = this.state.read().await;
@@ -57,13 +57,13 @@ impl InstanceProcessStrategy for UniversalInstanceStrategy {
 }
 
 impl StrategyConstructor for UniversalInstanceStrategy {
-    fn new() -> impl InstanceStrategy + InstanceProcessStrategy + Send + Sync {
+    fn new() -> impl InstanceBehaviorStrategy + InstanceProcessStrategy + Send + Sync {
         Self {}
     }
 }
 
 #[async_trait::async_trait]
-impl InstanceStrategy for MinecraftInstanceStrategy {
+impl InstanceBehaviorStrategy for MinecraftInstanceStrategy {
     async fn get_report(&self, this: &Instance) -> InstanceReport {
         let status = {
             let state = this.state.read().await;
@@ -105,7 +105,7 @@ impl InstanceProcessStrategy for MinecraftInstanceStrategy {
 }
 
 impl StrategyConstructor for MinecraftInstanceStrategy {
-    fn new() -> impl InstanceStrategy + InstanceProcessStrategy + Send + Sync {
+    fn new() -> impl InstanceBehaviorStrategy + InstanceProcessStrategy + Send + Sync {
         Self {}
     }
 }

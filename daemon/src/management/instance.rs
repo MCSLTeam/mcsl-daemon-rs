@@ -1,6 +1,8 @@
 use crate::management::comm::InstanceProcess;
 use crate::management::config::InstanceConfigExt;
-use crate::management::strategy::{InstanceProcessStrategy, InstanceStrategy, StrategyConstructor};
+use crate::management::strategy::{
+    InstanceBehaviorStrategy, InstanceProcessStrategy, StrategyConstructor,
+};
 use anyhow::{bail, Result};
 use log::info;
 use mcsl_protocol::management::instance::{
@@ -28,7 +30,7 @@ pub(super) struct InstanceState {
 }
 
 impl InstanceState {
-    pub(super) fn new(config: InstanceConfig) -> Self {
+    fn new(config: InstanceConfig) -> Self {
         Self {
             config,
             last_config_modified: None,
@@ -37,7 +39,7 @@ impl InstanceState {
         }
     }
 
-    pub(super) fn has_config_changed(&self, config_path: &Path) -> bool {
+    fn has_config_changed(&self, config_path: &Path) -> bool {
         let current_metadata = std::fs::metadata(config_path);
         match (current_metadata, self.last_config_modified) {
             (Ok(meta), Some(last)) => meta.modified().ok() != Some(last),
@@ -47,7 +49,7 @@ impl InstanceState {
         }
     }
 
-    pub(super) fn reload_config(&mut self, config_path: &Path) -> Result<()> {
+    fn reload_config(&mut self, config_path: &Path) -> Result<()> {
         let data = std::fs::read_to_string(config_path)
             .map_err(|e| anyhow::anyhow!("Failed to read config: {}", e))?;
         let new_config = serde_json::from_str::<InstanceConfig>(&data)
@@ -69,13 +71,18 @@ pub struct Instance {
     pub(super) log_tx: broadcast::Sender<String>,
     pub(super) input_tx: broadcast::Sender<String>,
     pub(super) status_tx: broadcast::Sender<InstanceStatus>,
-    strategy: Arc<dyn InstanceStrategy + Send + Sync>,
+    strategy: Arc<dyn InstanceBehaviorStrategy + Send + Sync>,
     process_strategy: Arc<dyn InstanceProcessStrategy + Send + Sync>,
 }
 impl Instance {
     pub fn new<S>(config: InstanceConfig) -> Self
     where
-        S: StrategyConstructor + InstanceStrategy + InstanceProcessStrategy + 'static + Send + Sync,
+        S: StrategyConstructor
+            + InstanceBehaviorStrategy
+            + InstanceProcessStrategy
+            + 'static
+            + Send
+            + Sync,
     {
         let (log_tx, _) = broadcast::channel(256);
         let (input_tx, _) = broadcast::channel(32);
@@ -88,7 +95,7 @@ impl Instance {
             log_tx,
             input_tx,
             status_tx,
-            strategy: strategy.clone() as Arc<dyn InstanceStrategy + Send + Sync>,
+            strategy: strategy.clone() as Arc<dyn InstanceBehaviorStrategy + Send + Sync>,
             process_strategy: strategy as Arc<dyn InstanceProcessStrategy + Send + Sync>,
         }
     }
@@ -136,7 +143,6 @@ impl Instance {
         self.strategy.get_report(self).await
     }
 
-    // TODO apply process_strategy
     pub async fn start(&self) -> Result<()> {
         let mut state = self.state.write().await;
         if state.process.is_some() {

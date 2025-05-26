@@ -1,4 +1,5 @@
 use crate::management::config::InstanceConfigExt;
+use crate::management::factory::InstanceFactoryManager;
 use crate::management::instance::{Instance, INST_CFG_FILE_NAME};
 use crate::management::strategy::strategies::{
     MinecraftInstanceStrategy, UniversalInstanceStrategy,
@@ -13,8 +14,6 @@ use std::path::Path;
 use std::sync::Arc;
 use uuid::Uuid;
 
-// Container for storing Uuid: Instance pairs using scc::HashMap
-
 pub trait InstManagerTrait {
     async fn add(&self, setting: InstanceFactorySetting) -> anyhow::Result<InstanceConfig>;
     async fn remove(&self, inst_id: Uuid) -> anyhow::Result<()>;
@@ -28,6 +27,7 @@ pub trait InstManagerTrait {
 
 pub struct InstManager {
     instances: scc::HashMap<Uuid, Arc<Instance>, ahash::RandomState>,
+    factory_manager: InstanceFactoryManager,
 }
 
 impl InstManager {
@@ -105,6 +105,7 @@ impl InstManager {
     pub fn new() -> Self {
         let mut manager = Self {
             instances: scc::HashMap::default(),
+            factory_manager: InstanceFactoryManager::new(),
         };
         manager
             .init()
@@ -153,8 +154,11 @@ impl InstManager {
                 Instance::new::<UniversalInstanceStrategy>(config)
             };
 
-            // TODO 如果uuid重复,则修改uuid重新加入
-            self.instances.insert(uuid, Arc::new(instance));
+            self.instances
+                .insert(uuid, Arc::new(instance))
+                .map_err(|(k, _)| {
+                    anyhow::anyhow!("could not create instance(uuid={}) with conflicted uuid", k)
+                })?;
             debug!("instance(uuid={}) added", uuid);
         }
         Ok(())

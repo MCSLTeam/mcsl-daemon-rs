@@ -1,11 +1,7 @@
 use mcsl_protocol::management::instance::InstanceProcessMetrics;
-#[cfg(unix)]
-use nix::sys::signal::{kill, Signal};
-#[cfg(unix)]
-use nix::unistd::Pid;
 use std::io;
-use sysinfo::{ProcessRefreshKind, System};
-use tokio::time::{sleep, Duration};
+use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+use tokio::time::sleep;
 #[cfg(windows)]
 use winapi::shared::minwindef::{DWORD, FALSE};
 #[cfg(windows)]
@@ -26,6 +22,8 @@ impl ProcessHelper {
     pub fn term(pid: u32) -> io::Result<()> {
         #[cfg(unix)]
         {
+            use nix::sys::signal::{kill, Signal};
+            use nix::unistd::Pid;
             let pid = Pid::from_raw(pid as i32);
             kill(pid, Signal::SIGTERM).map_err(io::Error::other)?;
             Ok(())
@@ -50,7 +48,44 @@ impl ProcessHelper {
     /// Retrieves child process IDs for a given parent process ID.
     /// On Windows, filters by command line if cmdline_contains is provided.
     #[cfg(windows)]
-    pub fn child_id(parent_pid: u32, cmdline_contains: Option<&str>) -> io::Result<Vec<u32>> {
+    pub fn child_id_by_cmdline(parent_pid: u32, partial_cmdline: &str) -> io::Result<Vec<u32>> {
+        let child_ids = Self::child_id(parent_pid)?
+            .iter()
+            .map(|id| Pid::from_u32(*id))
+            .collect::<Vec<_>>();
+
+        let mut system = System::new();
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&child_ids),
+            true,
+            ProcessRefreshKind::nothing().with_cmd(UpdateKind::Always),
+        );
+
+        let mut rv = vec![];
+        for child_pid in child_ids {
+            if system
+                .process(child_pid)
+                .map(|p| {
+                    let cmdline = p
+                        .cmd()
+                        .iter()
+                        .map(|os_str| os_str.to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    cmdline.contains(partial_cmdline)
+                })
+                .unwrap_or(false)
+            {
+                rv.push(child_pid.as_u32());
+            }
+        }
+        Ok(rv)
+    }
+
+    /// Retrieves child process IDs for a given parent process ID.
+    /// On Windows, filters by command line if cmdline_contains is provided.
+    #[cfg(windows)]
+    pub fn child_id(parent_pid: u32) -> io::Result<Vec<u32>> {
         let mut result = Vec::new();
         let snapshot = unsafe {
             CreateToolhelp32Snapshot(0x00000002 /* TH32CS_SNAPPROCESS */, 0)
@@ -60,27 +95,12 @@ impl ProcessHelper {
         }
 
         let mut entry: PROCESSENTRY32 = unsafe { std::mem::zeroed() };
-        entry.dwSize = std::mem::size_of::<PROCESSENTRY32>() as DWORD;
+        entry.dwSize = size_of::<PROCESSENTRY32>() as DWORD;
 
         if unsafe { Process32First(snapshot, &mut entry) } != 0 {
             loop {
-                debug!("traverse pid: {}", entry.th32ProcessID);
                 if entry.th32ParentProcessID == parent_pid {
-                    // Check command line if provided
-                    let matches_cmdline = if let Some(search) = cmdline_contains {
-                        let cmdline = unsafe {
-                            std::ffi::CStr::from_ptr(entry.szExeFile.as_ptr())
-                                .to_string_lossy()
-                                .into_owned()
-                        };
-                        cmdline.contains(search)
-                    } else {
-                        true
-                    };
-
-                    if matches_cmdline {
-                        result.push(entry.th32ProcessID);
-                    }
+                    result.push(entry.th32ProcessID);
                 }
                 if unsafe { Process32Next(snapshot, &mut entry) } == 0 {
                     break;
@@ -97,11 +117,11 @@ impl ProcessHelper {
         let mut system = System::new_all();
 
         // 将 u32 PID 转换为 sysinfo 的 Pid 类型
-        let pid = sysinfo::Pid::from_u32(pid);
+        let pid = Pid::from_u32(pid);
 
         // 刷新系统信息，包括进程数据
         system.refresh_processes_specifics(
-            sysinfo::ProcessesToUpdate::Some(&[pid]),
+            ProcessesToUpdate::Some(&[pid]),
             true,
             ProcessRefreshKind::nothing().with_cpu().with_memory(),
         );
@@ -112,10 +132,10 @@ impl ProcessHelper {
             .ok_or_else(|| anyhow::anyhow!("Process(pid={}) not existed", pid))?;
 
         // 异步等待一段时间以测量 CPU 使用率
-        sleep(Duration::from_millis(500)).await;
+        sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL * 3).await;
 
         system.refresh_processes_specifics(
-            sysinfo::ProcessesToUpdate::Some(&[pid]),
+            ProcessesToUpdate::Some(&[pid]),
             true,
             ProcessRefreshKind::nothing().with_cpu().with_memory(),
         );
@@ -124,11 +144,12 @@ impl ProcessHelper {
         let process = system
             .process(pid)
             .ok_or_else(|| anyhow::anyhow!("Process(pid={}) exited after refresh", pid))?;
-
         // 计算 CPU 使用率（百分比）
         // sysinfo 返回的 CPU 使用率是基于单核的，需除以 CPU 核心数
-        let cpu_count = system.cpus().len() as f64;
-        let cpu_usage = process.cpu_usage() as f64 / cpu_count;
+        let cpu_usage = {
+            let cpu_count = system.cpus().len() as f64;
+            process.cpu_usage() as f64 / cpu_count
+        };
 
         // 内存占用已为字节单位
         let memory_usage = process.memory();
@@ -144,13 +165,17 @@ impl ProcessHelper {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use log::info;
 
     #[test]
     #[cfg(windows)]
     fn test_process_helper() {
         // This is just a placeholder for testing
         // Actual testing would require running processes and platform-specific handling
-        let result = ProcessHelper::child_id(1, None);
+        let result = ProcessHelper::child_id(1);
+        info!("{:?}", result);
+        assert!(result.is_ok());
+        let result = ProcessHelper::child_id(1);
         assert!(result.is_ok());
     }
 
@@ -159,7 +184,7 @@ mod tests {
         // 使用当前进程的 PID 进行测试
         let pid = std::process::id();
 
-        match ProcessHelper::get_process_metrics(pid).await {
+        match ProcessHelper::get_process_metrics(23008).await {
             Ok(metrics) => {
                 println!("CPU usage: {:.2}%", metrics.cpu);
                 println!("Memory usage: {} B", metrics.memory);

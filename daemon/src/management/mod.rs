@@ -6,3 +6,4 @@ pub mod instance;
 pub mod manager;
 pub mod minecraft;
 mod strategy;
+mod version;

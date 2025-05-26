@@ -1,11 +1,12 @@
 use anyhow::{anyhow, bail, Result};
 use cached::proc_macro::cached;
 use lazy_static::lazy_static;
-use log::{debug, warn};
+use log::{debug, info, warn};
 use regex::Regex;
 use std::ffi::OsString;
 use std::path::Path;
 use std::sync::{atomic, Arc};
+use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::select;
@@ -36,13 +37,12 @@ pub struct ProcessMonitor {
 
 #[cached(time = 2, size = 128)]
 async fn _get_process_metrics(pid: u32) -> InstanceProcessMetrics {
-    match ProcessHelper::get_process_metrics(pid).await {
-        Ok(pc) => pc,
-        Err(err) => {
+    ProcessHelper::get_process_metrics(pid)
+        .await
+        .unwrap_or_else(|err| {
             warn!("Failed to get process metric: {}", err);
             InstanceProcessMetrics::default()
-        }
-    }
+        })
 }
 impl ProcessMonitor {
     pub fn new(process_id: u32) -> Self {
@@ -113,21 +113,24 @@ impl InstanceProcess {
         let server_process_id = process_id;
 
         #[cfg(windows)]
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        #[cfg(windows)]
         let server_process_id = process
             .id()
             .map(|id| {
-                ProcessHelper::child_id(id, Some(&config.target))
-                    .map(|ids| ids.first().into())
+                ProcessHelper::child_id_by_cmdline(id, &config.target)
+                    .map(|ids| ids.first().map(|id| *id))
                     .ok()
             })
             .flatten()
+            .flatten()
             .unwrap_or(0);
+
+        info!("{}>{} started", process_id, server_process_id);
 
         let (stop_tx, term_rx) = oneshot::channel();
         let exited = Arc::new(atomic::AtomicBool::new(false));
         let monitor = ProcessMonitor::new(server_process_id);
-
-        let (output_tx, output_rx) = mpsc::channel::<String>(100);
 
         let stdout = process.stdout.take().unwrap();
         let stderr = process.stderr.take().unwrap();
