@@ -41,15 +41,15 @@ mod setting_utils {
 
     pub fn generate_eula(path: impl AsRef<Path>) -> anyhow::Result<()> {
         let mut eula = std::fs::File::open(path.as_ref())?;
-        eula.write(b"#By changing the setting below to TRUE you are indicating your agreement to our EULA (https://aka.ms/MinecraftEULA).")?;
-        eula.write(
+        eula.write_all(b"#By changing the setting below to TRUE you are indicating your agreement to our EULA (https://aka.ms/MinecraftEULA).")?;
+        eula.write_all(
             format!(
                 "#{}\n",
                 chrono::Local::now().format("%a %b %d %H:%M:%S %Z %Y")
             )
             .as_bytes(),
         )?;
-        eula.write(b"eula=true")?;
+        eula.write_all(b"eula=true")?;
         Ok(())
     }
 }
