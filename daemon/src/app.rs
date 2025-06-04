@@ -38,7 +38,7 @@ fn init_app_state() -> AppState {
         serde_json::to_string_pretty(&config).unwrap()
     );
 
-    let files = Files::new(config.protocols.clone());
+    let files = Files::new(config.protocols.v1.file_download_sessions);
     let protocol_v1 = Arc::new(ProtocolV1::new(files)); // v1 protocol resources
     let protocols = Protocols::combine(config.protocols.enabled.as_ref());
 
