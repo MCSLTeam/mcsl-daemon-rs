@@ -68,7 +68,7 @@ impl InstanceState {
 // Instance struct as provided
 pub struct Instance {
     pub(super) state: Arc<RwLock<InstanceState>>,
-    pub(super) log_tx: broadcast::Sender<String>,
+    pub(super) log_tx: broadcast::Sender<Arc<String>>,
     pub(super) input_tx: broadcast::Sender<String>,
     pub(super) status_tx: broadcast::Sender<InstanceStatus>,
     strategy: Arc<dyn InstanceBehaviorStrategy + Send + Sync>,
@@ -121,7 +121,7 @@ impl Instance {
     pub fn get_status(&self) -> InstanceStatus {
         self.state.blocking_read().status.clone()
     }
-    pub fn get_log_rx(&self) -> broadcast::Receiver<String> {
+    pub fn get_log_rx(&self) -> broadcast::Receiver<Arc<String>> {
         self.log_tx.subscribe()
     }
     pub fn get_status_rx(&self) -> broadcast::Receiver<InstanceStatus> {
@@ -201,7 +201,7 @@ impl Instance {
 
                 line = collector.recv() => {
                     if let Ok(line) = line {
-                        log_collected.push(line);
+                        log_collected.push(line.to_string());
                     }
                 }
             }

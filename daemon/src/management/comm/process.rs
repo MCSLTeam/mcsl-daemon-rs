@@ -1,7 +1,11 @@
+use crate::management::comm::process_helper::ProcessHelper;
+use crate::management::config::InstanceConfigExt;
+use crate::management::strategy::InstanceProcessStrategy;
 use anyhow::{anyhow, bail, Result};
 use cached::proc_macro::cached;
 use lazy_static::lazy_static;
 use log::{debug, info, warn};
+use mcsl_protocol::management::instance::{InstanceConfig, InstanceProcessMetrics, InstanceStatus};
 use regex::Regex;
 use std::ffi::OsString;
 use std::path::Path;
@@ -10,12 +14,8 @@ use std::time::Duration;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::select;
-use tokio::sync::{broadcast, mpsc, oneshot};
-
-use crate::management::comm::process_helper::ProcessHelper;
-use crate::management::config::InstanceConfigExt;
-use crate::management::strategy::InstanceProcessStrategy;
-use mcsl_protocol::management::instance::{InstanceConfig, InstanceProcessMetrics, InstanceStatus};
+use tokio::sync::broadcast::Sender;
+use tokio::sync::{broadcast, oneshot};
 
 lazy_static! {
     static ref DONE_PATTERN: Regex =
@@ -59,7 +59,7 @@ pub struct InstanceProcess {
     process_id: u32,
     exited: Arc<atomic::AtomicBool>,
     term_signal: Option<oneshot::Sender<bool>>,
-    log_tx: broadcast::Sender<String>,
+    log_tx: broadcast::Sender<Arc<String>>,
     status_tx: broadcast::Sender<InstanceStatus>,
     pub monitor: ProcessMonitor,
 }
@@ -68,7 +68,7 @@ impl InstanceProcess {
     pub async fn start(
         config: &InstanceConfig,
         is_mc_server: bool,
-        log_tx: broadcast::Sender<String>,
+        log_tx: Sender<Arc<String>>,
         mut input_rx: broadcast::Receiver<String>,
         status_tx: broadcast::Sender<InstanceStatus>,
         strategy: Arc<dyn InstanceProcessStrategy + Send + Sync>,
@@ -117,12 +117,11 @@ impl InstanceProcess {
         #[cfg(windows)]
         let server_process_id = process
             .id()
-            .map(|id| {
+            .and_then(|id| {
                 ProcessHelper::child_id_by_cmdline(id, &config.target)
-                    .map(|ids| ids.first().map(|id| *id))
+                    .map(|ids| ids.first().copied())
                     .ok()
             })
-            .flatten()
             .flatten()
             .unwrap_or(0);
 
@@ -151,12 +150,13 @@ impl InstanceProcess {
                 loop {
                     select! {
                         // 监听进程stdout
+                        // TODO 消息合并器, 要么buffer充满, 要么超时才会发出合并的消息
                         line = stdout.next_line() => {
                             if let Ok(Some(line)) = line {
                                 if is_mc_server {
                                     strategy.on_line_received(&line,&status_tx);
                                 }
-                                let _ = log_tx.send(line).ok();
+                                let _ = log_tx.send(Arc::new(line)).ok();
                             }
                         }
                         // 监听进程stderr
@@ -166,7 +166,7 @@ impl InstanceProcess {
                                 if is_mc_server {
                                     strategy.on_line_received(&line,&status_tx);
                                 }
-                                let _ = log_tx.send(stderr_line).ok();
+                                let _ = log_tx.send(Arc::new(stderr_line)).ok();
                             }
                         }
                         // 进程stdin输入

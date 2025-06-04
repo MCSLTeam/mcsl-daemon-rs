@@ -53,7 +53,7 @@ impl InstanceProcessStrategy for UniversalInstanceStrategy {
         let _ = statue_tx.send(InstanceStatus::Running);
     }
 
-    fn on_line_received(&self, line: &str, status_tx: &broadcast::Sender<InstanceStatus>) {}
+    fn on_line_received(&self, _: &str, _: &broadcast::Sender<InstanceStatus>) {}
 }
 
 impl StrategyConstructor for UniversalInstanceStrategy {
@@ -75,8 +75,8 @@ impl InstanceBehaviorStrategy for MinecraftInstanceStrategy {
         InstanceReport {
             status: status.clone(),
             config,
-            properties: std::collections::HashMap::default(),
-            player: vec![],
+            properties: todo!("获取server.properties"),
+            player: todo!("通过slp client获取玩家列表"),
             performance_counter: this.get_process_metrics().await,
         }
     }

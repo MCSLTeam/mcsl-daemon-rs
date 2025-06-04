@@ -17,10 +17,7 @@ impl InstanceFactoryConstructor for UniversalInstanceFactory {
 
 #[async_trait::async_trait]
 impl CoreInstanceFactory for UniversalInstanceFactory {
-    async fn install(
-        &mut self,
-        mut setting: InstanceFactorySetting,
-    ) -> anyhow::Result<InstanceConfig> {
+    async fn install(&mut self, setting: InstanceFactorySetting) -> anyhow::Result<InstanceConfig> {
         setting.copy_and_rename_target().await?;
         setting.fix_eula().await?;
 

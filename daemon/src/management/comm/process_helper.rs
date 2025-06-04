@@ -184,7 +184,7 @@ mod tests {
         // 使用当前进程的 PID 进行测试
         let pid = std::process::id();
 
-        match ProcessHelper::get_process_metrics(23008).await {
+        match ProcessHelper::get_process_metrics(pid).await {
             Ok(metrics) => {
                 println!("CPU usage: {:.2}%", metrics.cpu);
                 println!("Memory usage: {} B", metrics.memory);
