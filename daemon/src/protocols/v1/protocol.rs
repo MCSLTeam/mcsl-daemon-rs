@@ -18,11 +18,40 @@ pub struct ProtocolV1 {
 }
 
 impl Protocol for ProtocolV1 {
-    async fn process_text(&self, raw: String) -> Option<String> {
-        Some(serde_json::to_string_pretty(&self.process(&raw).await).unwrap())
+    fn process_text_request<'req>(
+        &self,
+        raw: &'req str,
+    ) -> Result<ActionRequest<'req>, ActionResponse> {
+        serde_json::from_str::<ActionRequest>(raw).map_err(move |err| {
+            log::error!("action error: {}", err);
+            Self::err(retcode::BAD_REQUEST.clone(), Uuid::nil())
+        })
     }
 
-    async fn process_binary(&self, _: Vec<u8>) -> Option<Vec<u8>> {
+    fn process_bin_request<'req>(
+        &self,
+        raw: &'req [u8],
+    ) -> Result<ActionRequest<'req>, ActionResponse> {
+        todo!()
+    }
+
+    async fn process_text(&self, raw: &str) -> Option<String> {
+        Some(serde_json::to_string_pretty(&self.process(raw).await).unwrap())
+    }
+
+    async fn process_binary(&self, _: &[u8]) -> Option<Vec<u8>> {
+        None
+    }
+
+    fn handle_text_rate_limit_exceed(&self, raw: &str) -> Option<String> {
+        let resp = match self.process_text_request(raw) {
+            Ok(req) => Self::err(retcode::RATE_LIMIT_EXCEEDED.clone(), req.id),
+            Err(resp) => resp,
+        };
+        Some(serde_json::to_string_pretty(&resp).unwrap())
+    }
+
+    fn handle_bin_rate_limit_exceed(&self, raw: &[u8]) -> Option<Vec<u8>> {
         None
     }
 }
@@ -30,12 +59,9 @@ impl Protocol for ProtocolV1 {
 impl ProtocolV1 {
     #[inline]
     async fn process(&self, raw: &str) -> ActionResponse {
-        let request = match serde_json::from_str::<ActionRequest>(raw) {
-            Ok(parsed) => parsed,
-            Err(err) => {
-                log::error!("action error: {}", err);
-                return Self::err(retcode::BAD_REQUEST.clone(), Uuid::nil());
-            }
+        let request = match self.process_text_request(raw) {
+            Ok(request) => request,
+            Err(resp) => return resp,
         };
 
         let response = match request.parameters {
@@ -84,7 +110,7 @@ impl ProtocolV1 {
         }
     }
 
-    fn err(retcode: Retcode, id: Uuid) -> ActionResponse {
+    pub fn err(retcode: Retcode, id: Uuid) -> ActionResponse {
         ActionResponse {
             status: ActionStatus::Error,
             data: ActionResults::ActionError {},

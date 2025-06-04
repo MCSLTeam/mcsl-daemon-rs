@@ -1,4 +1,3 @@
-use crate::protocols::ProtocolConfig;
 use std::fs;
 use std::io::Read;
 
@@ -17,7 +16,7 @@ pub const DOWNLOAD_ROOT: &str = "daemon/downloads";
 pub const INSTANCES_ROOT: &str = "daemon/instances";
 
 pub struct Files {
-    protocol_config: ProtocolConfig,
+    file_download_sessions: u8,
     // use ahash to speed up ops
     upload_sessions: HashMap<Uuid, FileUploadInfo, ahash::RandomState>,
     // use ahash to speed up ops
@@ -26,12 +25,12 @@ pub struct Files {
 
 // files utils
 impl Files {
-    pub fn new(protocol_config: ProtocolConfig) -> Self {
+    pub fn new(file_download_sessions: u8) -> Self {
         Self::init_dirs()
             .context("failed to initialize directories")
             .unwrap();
         Self {
-            protocol_config,
+            file_download_sessions,
             upload_sessions: HashMap::default(),
             download_sessions: HashMap::default(),
         }
@@ -270,7 +269,7 @@ impl Files {
                 file_sessions += 1;
             }
         });
-        if file_sessions > self.protocol_config.v1.file_download_sessions {
+        if file_sessions > self.file_download_sessions {
             bail!("max download sessions of file '{}' reached", path);
         }
 

@@ -90,20 +90,24 @@ async fn ws_handler(
 ) -> impl IntoResponse {
     info!("WebSocket connection received from {:?}", addr);
     // 执行验证逻辑
-    if let Err(reason) =
-        WebsocketConnection::verify_connection(state.clone(), &headers, params, &addr).await
-    {
-        return Response::builder()
+    match WebsocketConnection::verify_connection(state.clone(), &headers, params, &addr).await {
+        Ok(claims) => {
+            ws.on_upgrade(move |socket| handle_ws_connection(socket, claims, state, addr))
+        }
+        Err(reason) => Response::builder()
             .status(StatusCode::UNAUTHORIZED)
             .body(reason.into())
-            .unwrap();
+            .unwrap(),
     }
-
-    ws.on_upgrade(move |socket| handle_ws_connection(socket, state, addr))
 }
 
 // WebSocket连接处理
-async fn handle_ws_connection(socket: WebSocket, state: AppState, addr: SocketAddr) {
+async fn handle_ws_connection(
+    socket: WebSocket,
+    claims: JwtClaims,
+    state: AppState,
+    addr: SocketAddr,
+) {
     let state_clone = state.clone();
 
     // 将连接加入管理
@@ -111,7 +115,7 @@ async fn handle_ws_connection(socket: WebSocket, state: AppState, addr: SocketAd
         let state_clone = state.clone();
         match state
             .ws_conn_manager
-            .serve_connection(socket, state_clone, addr)
+            .serve_connection(socket, claims, state_clone, addr)
             .await
         {
             Ok(_) => debug!("WebSocket connection closed: {}", addr),
@@ -183,7 +187,7 @@ async fn subtoken_handler(mut multipart: Multipart) -> Result<Response<Body>, Ha
                 expires = if !expires_str.is_empty() {
                     Some(
                         expires_str
-                            .parse::<u64>()
+                            .parse::<i64>()
                             .map_err(|_| HandlerError::InvalidExpires)?,
                     )
                 } else {
