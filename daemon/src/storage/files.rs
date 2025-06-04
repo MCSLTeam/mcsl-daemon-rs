@@ -158,17 +158,20 @@ impl Files {
         Ok(uuid)
     }
 
-    pub async fn upload_chunk(
-        &self,
-        file_id: Uuid,
-        offset: u64,
-        data: &str,
-    ) -> anyhow::Result<(bool, u64)> {
+    pub async fn decode_chunk_data_string(data: &str) -> anyhow::Result<Vec<u8>> {
         // parse string data to bytes ()
         let data: Vec<u16> = data.encode_utf16().collect();
         // convert vec<u16> to big endian bytes
         let data: Vec<u8> = data.iter().flat_map(|&v| v.to_be_bytes()).collect();
+        Ok(data)
+    }
 
+    pub async fn upload_chunk(
+        &self,
+        file_id: Uuid,
+        offset: u64,
+        data: &[u8],
+    ) -> anyhow::Result<(bool, u64)> {
         if !self.upload_sessions.contains_async(&file_id).await {
             bail!("file is not uploading: upload session not found");
         }

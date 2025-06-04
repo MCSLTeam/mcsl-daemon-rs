@@ -53,6 +53,7 @@ regex = "1.11.0"
 scc = "2.2.0"
 ahash = "0.8.11"
 lazy_static = "1.5.0"
+varint-rs = "2.2.0"
 
 ## 跨平台API
 nix = { version = "0.27", features = ["signal"] }  # For Unix
