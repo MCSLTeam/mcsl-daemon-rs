@@ -1,29 +1,11 @@
-use crate::v1::event::data::{DaemonReportEventData, InstanceLogEventData};
-use crate::v1::event::meta::InstanceLogEventMeta;
+use crate::v1::event::data::EventData;
+use crate::v1::event::meta::EventMeta;
 use serde::Serialize;
 
-#[derive(Debug, Serialize, PartialEq)]
-#[serde(tag = "event", rename_all = "snake_case")]
-pub enum Events {
-    InstanceLog {
-        meta: InstanceLogEventMeta,
-        data: InstanceLogEventData,
-    },
-    DaemonReport {
-        meta: (),
-        data: DaemonReportEventData,
-    },
-}
-
-#[derive(Debug, Serialize, PartialEq)]
+#[derive(Debug, Serialize)]
 pub struct EventPacket {
     #[serde(flatten)]
-    event: Events,
-    time: u64,
-}
-
-impl EventPacket {
-    pub fn new(event: Events, time: u64) -> Self {
-        Self { event, time }
-    }
+    pub meta: EventMeta,
+    pub data: EventData,
+    pub time: u64,
 }
