@@ -39,7 +39,7 @@ impl Protocol for ProtocolV1 {
         raw: &'req [u8],
     ) -> Result<ActionRequest<'req>, ActionResponse> {
         // Packet format:
-        // 4 bytes: magic number (0x2cbb -> v1)
+        // uint32 (le): magic number (0x2cbb -> v1)
         // varint: request body length
         // varint: attachment length
         // [...request body]
@@ -47,7 +47,7 @@ impl Protocol for ProtocolV1 {
         
         let mut reader = std::io::Cursor::new(raw);
 
-        let magic_number = reader.read_u32().await.or_else(bad_request)?;
+        let magic_number = reader.read_u32_le().await.or_else(bad_request)?;
         if magic_number != 0x2cbb {
             return Err(Self::err(retcode::BAD_REQUEST.clone(), Uuid::nil()));
         }
