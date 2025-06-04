@@ -234,7 +234,7 @@ impl Permissions {
     pub fn from_str(permissions: &str) -> Result<Self, PermissionError> {
         static REGEX: OnceLock<Regex> = OnceLock::new();
         let regex = REGEX.get_or_init(|| {
-            Regex::new(r"(?:(?:[a-zA-Z-_]+|\*{1,2})\.)*(?:[a-zA-Z-_]+|\*{1,2})(?:,(?:(?:[a-zA-Z-_]+|\*{1,2})\.)*(?:[a-zA-Z-_]+|\*{1,2}))*").unwrap()
+            Regex::new(r"^(?:(?:[a-zA-Z-_]+|\*{1,2})\.)*(?:[a-zA-Z-_]+|\*{1,2})(?:,(?:(?:[a-zA-Z-_]+|\*{1,2})\.)*(?:[a-zA-Z-_]+|\*{1,2}))*$").unwrap()
         });
 
         if !regex.is_match(permissions) {
@@ -280,7 +280,7 @@ impl fmt::Display for Permissions {
             .map(|p| p.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        write!(f, "[{}]", perms)
+        write!(f, "{}", perms)
     }
 }
 

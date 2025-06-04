@@ -1,8 +1,9 @@
+use crate::auth::Permissions;
 use crate::config::AppConfig;
+use chrono::Utc;
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const CHARS_LEN: usize = CHARS.len();
@@ -36,23 +37,31 @@ fn uniform_random_index(rng: &SystemRandom, max: usize) -> Result<usize, ring::e
 pub struct JwtClaims {
     iss: String,
     aud: String,
-    pub exp: u64,
+    pub exp: i64,
     pub jti: String,
     pub perms: String,
 }
 
 impl JwtClaims {
-    pub fn new(exp: u64, perms: String) -> Self {
+    pub fn new(exp: i64, perms: String) -> Self {
         Self {
-            exp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                + exp,
+            exp: chrono::Utc::now().timestamp() + exp,
             iss: "MCServerLauncher.Daemon".into(),
             aud: "MCServerLauncher.Daemon".into(),
             jti: uuid::Uuid::new_v4().to_string(),
             perms,
+        }
+    }
+}
+
+impl Default for JwtClaims {
+    fn default() -> Self {
+        Self {
+            exp: chrono::DateTime::<Utc>::MAX_UTC.timestamp(),
+            iss: "MCServerLauncher.Daemon".into(),
+            aud: "MCServerLauncher.Daemon".into(),
+            jti: uuid::Uuid::nil().to_string(),
+            perms: Permissions::always().to_string(),
         }
     }
 }
