@@ -4,7 +4,7 @@ use crate::v1::action::status::ActionStatus;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(tag = "action", content = "params", rename_all = "snake_case")]
 #[serde(bound(deserialize = "'de: 'req"))]
 pub enum ActionParameters<'req> {
@@ -35,6 +35,12 @@ pub enum ActionParameters<'req> {
         file_id: Uuid,
         offset: u64,
         data: &'req str,
+    },
+    FileUploadChunkRaw {
+        file_id: Uuid,
+        offset: u64,
+        #[serde(skip)]
+        data: Option<&'req [u8]>,
     },
     FileUploadCancel {
         file_id: Uuid,
@@ -112,7 +118,7 @@ pub enum ActionResults {
     GetAllReports {},
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, Clone)]
 #[serde(bound(deserialize = "'de: 'req"))]
 pub struct ActionRequest<'req> {
     #[serde(flatten)]

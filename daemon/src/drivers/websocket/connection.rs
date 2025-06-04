@@ -166,7 +166,7 @@ impl WsConnManager {
                         if let Err(err) = conn.task_pool.try_submit(m).await{
                             match err{
                                 kanal::TrySendError::Full(m) => {
-                                    conn.handle_too_many_requests(m)?
+                                    conn.handle_too_many_requests(m).await?
                                 }
                                 _ => {break;}
                             }

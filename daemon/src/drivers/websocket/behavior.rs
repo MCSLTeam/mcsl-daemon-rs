@@ -4,8 +4,7 @@ use crate::config::AppConfig;
 use crate::drivers::websocket::WebsocketConnection;
 use crate::protocols::v1::ProtocolV1;
 use crate::protocols::{Protocol, Protocols};
-use axum::body::Bytes;
-use axum::extract::ws::{CloseFrame, Message, Utf8Bytes};
+use axum::extract::ws::{CloseFrame, Message};
 use axum::http::HeaderMap;
 use log::info;
 use std::collections::HashMap;
@@ -44,7 +43,6 @@ impl WebsocketConnection {
                 if protocols.is_enabled(Protocols::V1) {
                     v1.process_text(text.as_ref())
                         .await
-                        .map(|text| Message::Text(Utf8Bytes::from(text)))
                 } else {
                     None
                 }
@@ -53,20 +51,19 @@ impl WebsocketConnection {
                 if protocols.is_enabled(Protocols::V1) {
                     v1.process_binary(bin.as_ref())
                         .await
-                        .map(|bin| Message::Binary(Bytes::from(bin)))
                 } else {
                     None
                 }
             }
             Message::Close(close) => {
-                Self::handle_closing(close.as_ref(), &addr);
+                Self::handle_closing(close.as_ref(), &addr).await;
                 None
             }
             _ => None,
         }
     }
 
-    pub fn handle_closing(msg: Option<&CloseFrame>, addr: &SocketAddr) {
+    pub async fn handle_closing(msg: Option<&CloseFrame>, addr: &SocketAddr) {
         info!(
             "websocket close from client({}), with reason: {}",
             addr,
@@ -74,7 +71,7 @@ impl WebsocketConnection {
         );
     }
 
-    pub fn handle_too_many_requests(
+    pub async fn handle_too_many_requests(
         &self,
         data: Message,
     ) -> Result<(), SendError<Option<Message>>> {
@@ -83,8 +80,7 @@ impl WebsocketConnection {
                 if self.app_state.protocols.is_enabled(Protocols::V1) {
                     self.app_state
                         .protocol_v1
-                        .handle_text_rate_limit_exceed(text.as_ref())
-                        .map(|text| Message::Text(Utf8Bytes::from(text)))
+                        .handle_text_rate_limit_exceed(text.as_ref()).await
                 } else {
                     None
                 }
@@ -93,8 +89,7 @@ impl WebsocketConnection {
                 if self.app_state.protocols.is_enabled(Protocols::V1) {
                     self.app_state
                         .protocol_v1
-                        .handle_bin_rate_limit_exceed(bin.as_ref())
-                        .map(|bin| Message::Binary(Bytes::from(bin)))
+                        .handle_bin_rate_limit_exceed(bin.as_ref()).await
                 } else {
                     None
                 }
