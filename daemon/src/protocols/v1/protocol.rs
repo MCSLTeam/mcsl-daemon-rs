@@ -39,7 +39,7 @@ impl Protocol for ProtocolV1 {
         raw: &'req [u8],
     ) -> Result<ActionRequest<'req>, ActionResponse> {
         // Packet format:
-        // 4 bytes: magic number (0x2cbb -> v1)
+        // uint32 (le): magic number (0x2cbb -> v1)
         // varint: request body length
         // varint: attachment length
         // [...request body]
