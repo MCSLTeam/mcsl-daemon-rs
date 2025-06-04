@@ -47,6 +47,7 @@ thiserror = "2"
 
 ## 工具和通用库
 cached = { version = "0", features = ["async", "ahash"] }
+kanal = { git = "https://github.com/AresConnor/kanal.git" }
 sysinfo = "0"
 regex = "1.11.0"
 scc = "2.2.0"
