@@ -47,7 +47,7 @@ impl Protocol for ProtocolV1 {
         
         let mut reader = std::io::Cursor::new(raw);
 
-        let magic_number = reader.read_u32().await.or_else(bad_request)?;
+        let magic_number = reader.read_u32_le().await.or_else(bad_request)?;
         if magic_number != 0x2cbb {
             return Err(Self::err(retcode::BAD_REQUEST.clone(), Uuid::nil()));
         }
