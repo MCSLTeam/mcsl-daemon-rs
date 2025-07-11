@@ -1,21 +1,29 @@
-# Design Philosophy
-1. 采用异步设计，尽量不使用 blocking 的 API, 或封装为 future.
-2. 精简库依赖，非必要不添加依赖库,除非被依赖依赖的库.
-3. 深思熟虑的API设计，保持代码精简与高度复用的同时降低复杂度与使用难度.
+![Header Image](https://socialify.git.ci/MCSLTeam/MCServerLauncher-Future/image?description=1&descriptionEditable=Future%20version%20of%20MCSL.%20Redefined%2C%20Versatile%2C%20Easy%20to%20use.&font=Jost&logo=https%3A%2F%2Fimages.mcsl.com.cn%2Fnew%2FMCServerLauncherFuture.png&name=1&pattern=Circuit%20Board&theme=Auto)  
+English | [中文](https://github.com/MCSLTeam/MCServerLauncher-Future/blob/master/README_ZH.md)  
+</br>
+This is an experimental repository. If you want to know more about the stable project, just click [here](https://github.com/MCSLTeam/MCServerLauncher-Future).
 
-### Q&A
-1. Q：pull后启动报错? A: 尝试删除config.json
+[![GPLv3](https://img.shields.io/badge/License-GPLv3-blue?color=#4ec820)](LICENSE)
+![Platform Windows | macOS | Linux](https://img.shields.io/badge/Platform-Windows%20|%20Linux%20|%20macOS-blue?color=#4ec820)
 
-## 构建说明
+## System Requirements
 
-使用
-```powershell
-cargo build --release
-```
-来构建 release 配置
+Windows 7 or later.
+macOS 10.15 or later.
 
-或者通过
-```powershell
-cargo build --profile fat-release
-```
-来构建矿泉水写的 release 配置
+## Contact
+
+Email: [services@mcsl.com.cn](mailto:services@mcsl.com.cn)
+
+QQ Group 1: [733951376](https://qm.qq.com/q/WtVCQWSBEe)
+
+QQ Group 2: [819067131](https://qm.qq.com/q/EXBE6a5CF4)
+
+## Open Source License
+
+This project is distributed under
+the [GNU General Public License Version 3.0](https://github.com/MCSLTeam/MCServerLauncher-Future/blob/master/LICENSE).
+
+## Copyright
+
+Copyright © 2022-2025 MCSLTeam. All rights reserved.
