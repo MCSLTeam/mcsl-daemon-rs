@@ -1,3 +1,4 @@
+use std::time::Duration;
 use cached::proc_macro::cached;
 use regex::Regex;
 use std::collections::HashMap;
