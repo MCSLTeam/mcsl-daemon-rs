@@ -3,7 +3,7 @@
 </br>
 这是一个实验性项目. 如果你需要了解稳定版，请点击 [此处](https://github.com/MCSLTeam/MCServerLauncher-Future).
 
-[![GPLv3](https://img.shields.io/badge/License-GPLv3-blue?color=#4ec820)](LICENSE)
+[![Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue?color=#4ec820)](LICENSE)
 ![平台 Windows | macOS | Linux](https://img.shields.io/badge/Platform-Windows%20|%20Linux%20|%20macOS-blue?color=#4ec820)
 
 ## 系统需求
@@ -21,7 +21,7 @@ QQ群2：[819067131](https://qm.qq.com/q/EXBE6a5CF4)
 
 ## 开源许可证
 
-本项目采用 [GNU General Public License Version 3.0](https://github.com/MCSLTeam/MCServerLauncher-Future/blob/master/LICENSE) 进行分发。
+本项目采用 [Apache License, Version 2.0](LICENSE) 进行分发。
 
 ## 版权
 

@@ -2,6 +2,7 @@
 name = "mcsl_daemon"
 version = "0.1.0"
 edition = "2021"
+license = "Apache-2.0"
 
 [dependencies]
 mcsl_protocol = { path = "../protocol", features = ["v1"] }
